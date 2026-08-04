@@ -24,11 +24,11 @@ export default function FeeStructure() {
   useEffect(() => { reload(); }, []);
 
   const seed2026 = async () => {
-    if (!window.confirm('Load all 29 fee structures from the 2026-27 PDF? Classes will be created for English / Semi-English / Junior College mediums. Existing structures are skipped.')) return;
+    if (!window.confirm('Load all fee structures from the 2026-27 PDF (English Medium, Semi Medium (Marathi), Junior College)? Existing 2026-27 structures will be REPLACED with the authoritative amounts.')) return;
     setSeeding(true);
     try {
-      const { data } = await api.post('/fee-structures/seed-2026');
-      toast.success(`✓ ${data.structures_created} structures created · ${data.classes_created} new classes · ${data.skipped} skipped (of ${data.total_rows} rows in PDF)`);
+      const { data } = await api.post('/fee-structures/seed-2026?replace=true');
+      toast.success(`✓ ${data.structures_created} structures loaded · ${data.classes_created} new classes · ${data.skipped} skipped (of ${data.total_rows} rows)`);
       await reload();
     } catch (e) { toast.error(e?.response?.data?.detail || 'Failed'); }
     setSeeding(false);
@@ -98,15 +98,28 @@ export default function FeeStructure() {
             {structures.map(s => {
               const d = depts.find(x=>x.id===s.department_id);
               const c = classes.find(x=>x.id===s.class_id);
+              const isNewOnly = s.applies_to === 'new_only';
+              const isReturningOnly = s.applies_to === 'returning_only';
               return <div key={s.id} className="p-3 border-b border-slate-100 text-sm flex items-center justify-between gap-2">
-                <div>
-                  <div className="font-medium">{d?.name} · {c?.name}</div>
-                  <div className="text-xs text-slate-500">{s.academic_year} · <span className="font-mono tabular font-medium text-slate-900">{inr(s.total)}</span></div>
+                <div className="min-w-0">
+                  <div className="font-medium truncate">
+                    {s.medium ? `${s.medium}` : d?.name} · {s.class_name || c?.name}
+                    {s.stream && <span className="text-slate-500"> · {s.stream}</span>}
+                  </div>
+                  <div className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
+                    <span>{s.academic_year}</span>
+                    {isNewOnly && <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold">NEW ADMISSION</span>}
+                    {isReturningOnly && <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-semibold">RETURNING</span>}
+                    <span className="font-mono tabular font-medium text-slate-900">{inr(s.total)}</span>
+                    {(s.admission_fee > 0) && <span>· Adm {inr(s.admission_fee)}</span>}
+                    {(s.continuation_fee > 0) && <span>· Cont {inr(s.continuation_fee)}</span>}
+                    {(s.tuition_total > 0) && <span>· Tuition {inr(s.tuition_total)}</span>}
+                  </div>
                 </div>
                 <button
                   data-testid={`fs-dup-${s.id}`}
                   onClick={() => setDup(s)}
-                  className="text-xs h-7 px-2 border border-slate-300 rounded hover:bg-slate-50 text-slate-700"
+                  className="text-xs h-7 px-2 border border-slate-300 rounded hover:bg-slate-50 text-slate-700 shrink-0"
                 >Duplicate →</button>
               </div>;
             })}

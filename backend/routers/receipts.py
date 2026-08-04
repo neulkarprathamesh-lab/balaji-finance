@@ -150,6 +150,28 @@ async def create_receipt(body: ReceiptIn, user = Depends(require_roles("administ
         student = await db.students.find_one({"id": body.student_id})
         if not student: raise HTTPException(400, "Invalid student")
     total = sum(l.amount for l in body.lines)
+
+    # ---- Business rules ---------------------------------------------------
+    # Admission Fee is a one-time-only line per student per academic year.
+    # Continuation Fee must be paid in full — no partial payments allowed.
+    if student:
+        line_names = {(l.fee_head_name or "").strip().lower() for l in body.lines}
+        ay_now = dept.get("academic_year", "2026-27")
+        if "admission fee" in line_names:
+            prior = await db.receipts.find(
+                {"student_id": body.student_id, "status": {"$ne": "cancelled"},
+                 "academic_year": ay_now, "lines.fee_head_name": {"$regex": "^admission fee$", "$options": "i"}},
+                {"_id": 0, "number": 1}
+            ).to_list(5)
+            if prior:
+                raise HTTPException(409, f"Admission Fee for {student['name']} was already collected on receipt {prior[0]['number']} — it cannot be charged again.")
+        if "continuation fee" in line_names and student.get("fee_structure_id"):
+            fs = await db.fee_structures.find_one({"id": student["fee_structure_id"]}, {"_id":0})
+            expected = float(fs.get("continuation_fee", 0)) if fs else 0
+            paid_line = next((l for l in body.lines if (l.fee_head_name or "").strip().lower() == "continuation fee"), None)
+            if expected > 0 and paid_line and abs(float(paid_line.amount) - expected) > 0.01:
+                raise HTTPException(400, f"Continuation Fee must be paid in full (₹{int(expected)}). Partial payments are not allowed.")
+
     if body.receipt_type in ("refund","debit_voucher"):
         if user["role"] not in ("administrator","manager"):
             raise HTTPException(403, "Refund/voucher requires manager or admin")
@@ -159,12 +181,29 @@ async def create_receipt(body: ReceiptIn, user = Depends(require_roles("administ
     else:
         number = await next_receipt_number(dept["code"], ay)
     rid = gen_id()
+    # Rich student snapshot so receipts always self-describe (survives student edits)
+    snapshot = None
+    if student:
+        class_doc = await db.classes.find_one({"id": student.get("class_id")}, {"_id":0}) if student.get("class_id") else None
+        fs_doc = await db.fee_structures.find_one({"id": student.get("fee_structure_id")}, {"_id":0, "items":0}) if student.get("fee_structure_id") else None
+        snapshot = {
+            "admission_no": student["admission_no"], "name": student["name"],
+            "father_name": student.get("father_name"), "mother_name": student.get("mother_name"),
+            "guardian_mobile": student.get("guardian_mobile"),
+            "class_id": student.get("class_id"),
+            "class_name": class_doc.get("name") if class_doc else None,
+            "section": student.get("section"), "roll_no": student.get("roll_no"),
+            "medium": student.get("medium"), "stream": student.get("stream"),
+            "academic_year": student.get("academic_year") or ay,
+            "fee_structure_name": (f"{fs_doc.get('medium')} · {fs_doc.get('class_name')}"
+                                    + (f" · {fs_doc.get('stream')}" if fs_doc and fs_doc.get('stream') else "")) if fs_doc else None,
+        }
     doc = {
         "id": rid, "number": number, "receipt_type": body.receipt_type,
         "department_id": body.department_id, "department_name": dept["name"], "department_code": dept["code"],
         "department_header1": dept.get("header_line1"), "department_header2": dept.get("header_line2"),
         "student_id": body.student_id,
-        "student_snapshot": {"admission_no": student["admission_no"], "name": student["name"], "class_id": student.get("class_id")} if student else None,
+        "student_snapshot": snapshot,
         "payer_name": body.payer_name or (student["name"] if student else None),
         "purpose": body.purpose, "payment_mode": body.payment_mode, "payment_reference": body.payment_reference,
         "lines": [l.model_dump() for l in body.lines], "total": total,

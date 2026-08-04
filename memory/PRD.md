@@ -225,7 +225,38 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 15) — Scheduled 8 AM Diagnostics + First-Run Onboarding
+## 2026-02-04 (continued 16) — Student Import & Automatic Fee Structure Assignment
+- **Rewrote** `fee_structure_2026.json` (41 rows) with the exact numbers from the school's 2026-27 PDF, using a new schema:
+  - `medium` (English Medium / Semi Medium (Marathi) / Junior College), `class_name`, `stream`
+  - `admission_fee`, `continuation_fee`, `term_fee`, `practical_fee`, `tuition_total`, `tuition_installments[]` (with due dates: 2026-08-01, 2026-10-01, 2027-01-01)
+  - `applies_to`: "all" | "new_only" | "returning_only" — enables JC 12th to auto-pick the right variant for direct-admission vs continuing students.
+- **New helpers in `core.py`**:
+  - `MEDIUM_ALIASES` + `canonical_medium()` — case-insensitive matcher (English/Eng/EM → "English Medium", Semi/SM/Marathi → "Semi Medium (Marathi)", JC/College → "Junior College")
+  - `canonical_stream()` — Arts/Commerce/Science/Electronics/Fisheries with common typo tolerance
+  - `normalize_class_name()` — 5th → Class 5, KG I → K.G. I, etc.
+  - `resolve_fee_structure(medium, class_name, stream, first_year_in_college, academic_year)` — the deterministic mapping used by both import and future admission flows.
+- **Rewrote** `POST /fee-structures/seed-2026?replace=true` to consume the new schema and stamp every structure with `medium`, `class_name`, `stream`, `admission_fee`, `continuation_fee`, `tuition_installments`, `applies_to`, `active` on top of the existing `items[]`/`total` fields. New helper endpoint `GET /fee-structures/resolve` for other callers.
+- **Rewrote** `POST /students/bulk-import`:
+  - **Medium is mandatory**; JC rows require Stream; non-JC rows can't carry Stream.
+  - Rejects Class 5 English tagged as Semi (medium/class alignment check).
+  - Rejects Class 11/12 tagged as English/Semi (JC only).
+  - Rejects unknown medium/class values with plain-English messages.
+  - Auto-picks department (EP / SEC / MP / JC), auto-creates the class row if missing (respecting medium+stream), auto-resolves the fee structure (honouring `first_year_in_college` for the JC 12th "new admission" variant), and stores `fee_structure_id`, `medium`, `stream`, `section`, `roll_no`, `father_name`, `mother_name`, `first_year_in_college` on the student.
+- **Excel template refreshed** (frontend `ImportExcel.js`): required = admission_no · name · medium · class_name; optional = stream · section · roll_no · father_name · mother_name · guardian_mobile · academic_year · first_year_in_college · address. 4 example rows cover English Medium, Semi Medium (Marathi), JC Class 11 (Science, first_year=yes), JC Class 12 (Commerce, first_year=no).
+- **Receipt rules enforced** (`POST /receipts`):
+  - **Admission Fee is one-time only** per student per academic year — a second receipt with a line named "Admission Fee" returns `409` with `"Admission Fee for {student} was already collected on receipt {number} — it cannot be charged again."`
+  - **Continuation Fee must be paid in full** — if the amount doesn't match `fee_structure.continuation_fee`, returns `400 "Continuation Fee must be paid in full (₹X). Partial payments are not allowed."`
+  - **Rich student snapshot** now stamped on every receipt (admission_no, name, father/mother names, mobile, class name, section, roll_no, medium, stream, academic year, resolved fee-structure name) so receipts self-describe forever, even if the student record is edited later.
+- **Fee Structure UI**: existing structures list now shows Medium · Class · Stream with badges for `NEW ADMISSION` (amber) and `RETURNING` (blue), plus a breakdown of Admission / Continuation / Tuition amounts per row. Seed button switched to `replace=true`.
+- **Verified end-to-end**:
+  - Seed loaded 41 structures cleanly.
+  - Resolver returns correct row for English/Class 5 (adm 9000, cont 5000, tuition 9000), JC/Class 12/Arts/new (adm 1000, tuition 2000), JC/Class 12/Arts/returning (adm 0, tuition 1500).
+  - Bulk import of 5 mixed rows: 3 accepted, 2 rejected with the exact right error messages (Class 11 English → blocked, JC without stream → blocked). Case-insensitive medium fuzzy match confirmed ("Semi" → canonical), class-name normalisation confirmed ("5th Std" → "Class 5").
+  - Admission Fee receipt succeeded first time, blocked with a clear message on the second attempt.
+  - 47/47 pytest passing.
+- Distribution ZIP rebuilt at 9.7 MB.
+
+
 - **Scheduled 8 AM Diagnostics**: `routers/diagnostics.py` now exposes `daily_diagnostics_scheduler()` — an asyncio task launched from `server.py`'s startup event. It records an initial snapshot on boot, then sleeps until 08:00 server-local every day and takes another snapshot (`source="scheduler"`), retaining the most-recent 60 snapshots in a new `diagnostic_reports` collection. No new dependency (uses stdlib asyncio + datetime).
 - **New endpoints**:
   - `GET /api/diagnostics/latest` — returns the most recent snapshot (used by the dashboard banner)

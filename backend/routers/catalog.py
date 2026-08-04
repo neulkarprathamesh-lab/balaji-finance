@@ -232,58 +232,119 @@ async def rollover_fee_structures(body: RolloverIn, user = Depends(require_roles
     return {"created": created, "from": body.from_academic_year, "to": body.to_academic_year}
 
 @router.post("/fee-structures/seed-2026")
-async def seed_2026_fee_structures(user = Depends(require_roles("administrator","manager"))):
+async def seed_2026_fee_structures(replace: bool = False,
+                                    user = Depends(require_roles("administrator","manager"))):
+    """Seed all 2026-27 fee structures from /app/memory/fee_structure_2026.json.
+    Each row carries `medium`, `class_name`, optional `stream`, `admission_fee`, `continuation_fee`,
+    `tuition_installments`, `term_fee`, `practical_fee`, `tuition_total`, and `applies_to`."""
     rows: List[dict] = []
     try:
         with open("/app/memory/fee_structure_2026.json", "r") as f:
             rows = _json.load(f)
     except Exception as e:
         raise HTTPException(500, f"Cannot read seed file: {e}")
-    fee_head_names = ["Admission Fee", "Continuation Fee", "Tuition Q1", "Tuition Q2", "Tuition Q3", "Term Fees", "Tuition Fee", "Practical Fee"]
+    ay = "2026-27"
+    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
+    def pick_dept(medium: str, class_name: str):
+        cn = class_name.lower()
+        if medium == "Junior College": return depts.get("JC")
+        if medium == "English Medium":
+            return depts.get("SEC") if ("class 9" in cn or "class 10" in cn) else depts.get("EP")
+        return depts.get("MP")   # Semi Medium (Marathi)
+
+    fee_head_names = ["Admission Fee", "Continuation Fee", "Tuition I", "Tuition II", "Tuition III",
+                      "Tuition", "Term Fee", "Practical Fee"]
     fh_by_name: Dict[str, dict] = {fh["name"]: fh for fh in await db.fee_heads.find({}, {"_id":0}).to_list(200)}
     for nm in fee_head_names:
         if nm not in fh_by_name:
             code = nm.replace(" ","_").upper()[:8]
-            fh = {"id": gen_id(), "name": nm, "code": code, "category": "school", "created_at": now_iso()}
+            fh = {"id": gen_id(), "name": nm, "code": code, "category":"school", "created_at": now_iso()}
             await db.fee_heads.insert_one(fh); fh_by_name[nm] = fh
-    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
-    def pick_dept(class_name: str, medium: str):
-        cn = class_name.lower()
-        if medium == "Junior College": return depts.get("JC")
-        if "9th" in cn or "10th" in cn: return depts.get("SEC")
-        if medium == "English": return depts.get("EP")
-        if medium in ("Semi-English", "Semi English", "Marathi (Semi)"): return depts.get("MP")
-        return depts.get("EP")
-    ay = "2026-27"
+
+    if replace:
+        await db.fee_structures.delete_many({"academic_year": ay, "seeded_from": "fee_structure_2026.json"})
+
     created_classes = 0; created_structures = 0; skipped = 0
     for row in rows:
-        cname = row["class_name"]; medium = row.get("medium", "English"); fees = row.get("fees", {})
-        d = pick_dept(cname, medium)
-        if not d: continue
-        cls = await db.classes.find_one({"department_id": d["id"], "name": cname, "medium": medium}, {"_id":0})
+        cname = row["class_name"]
+        medium = row["medium"]
+        stream = row.get("stream")
+        applies_to = row.get("applies_to", "all")
+        d = pick_dept(medium, cname)
+        if not d:
+            continue
+        class_lookup: Dict[str, Any] = {"department_id": d["id"], "name": cname, "medium": medium}
+        if stream:
+            class_lookup["stream"] = stream
+        cls = await db.classes.find_one(class_lookup, {"_id":0})
         if not cls:
-            cls = {"id": gen_id(), "department_id": d["id"], "name": cname, "medium": medium, "created_at": now_iso()}
+            cls = {"id": gen_id(), **class_lookup, "created_at": now_iso()}
             await db.classes.insert_one(cls); created_classes += 1
-        existing_fs = await db.fee_structures.find_one({"class_id": cls["id"], "academic_year": ay})
-        if existing_fs:
+        fs_lookup: Dict[str, Any] = {"medium": medium, "class_name": cname,
+                                     "academic_year": ay, "applies_to": applies_to}
+        if stream:
+            fs_lookup["stream"] = stream
+        existing = await db.fee_structures.find_one(fs_lookup)
+        if existing:
             skipped += 1; continue
-        items = []; total = 0
-        for k, v in fees.items():
-            if not isinstance(v, (int, float)) or v <= 0: continue
-            if k in ("Total", "Total Fees"): continue
-            fh = fh_by_name.get(k) or fh_by_name.get(k.replace(" ", ""))
+        # Build items[]
+        items: List[dict] = []
+        if row.get("admission_fee", 0) > 0:
+            items.append({"fee_head_id": fh_by_name["Admission Fee"]["id"], "fee_head_name": "Admission Fee",
+                          "amount": float(row["admission_fee"]), "installment": None, "kind": "admission"})
+        if row.get("continuation_fee", 0) > 0:
+            items.append({"fee_head_id": fh_by_name["Continuation Fee"]["id"], "fee_head_name": "Continuation Fee",
+                          "amount": float(row["continuation_fee"]), "installment": None, "kind": "continuation"})
+        if row.get("term_fee", 0) > 0:
+            items.append({"fee_head_id": fh_by_name["Term Fee"]["id"], "fee_head_name": "Term Fee",
+                          "amount": float(row["term_fee"]), "installment": None, "kind": "term"})
+        if row.get("practical_fee", 0) > 0:
+            items.append({"fee_head_id": fh_by_name["Practical Fee"]["id"], "fee_head_name": "Practical Fee",
+                          "amount": float(row["practical_fee"]), "installment": None, "kind": "practical"})
+        for inst in row.get("tuition_installments", []):
+            head_name = inst.get("name") or "Tuition"
+            fh = fh_by_name.get(head_name)
             if not fh:
-                fh = {"id": gen_id(), "name": k, "code": k.replace(" ","_").upper()[:8], "category":"school", "created_at": now_iso()}
-                await db.fee_heads.insert_one(fh); fh_by_name[k] = fh
-            items.append({"fee_head_id": fh["id"], "fee_head_name": k, "amount": float(v),
-                          "installment": ("Q1" if "Q1" in k else "Q2" if "Q2" in k else "Q3" if "Q3" in k else None)})
-            total += float(v)
+                fh = {"id": gen_id(), "name": head_name, "code": head_name.replace(" ","_").upper()[:8], "category":"school", "created_at": now_iso()}
+                await db.fee_heads.insert_one(fh); fh_by_name[head_name] = fh
+            items.append({"fee_head_id": fh["id"], "fee_head_name": head_name,
+                          "amount": float(inst["amount"]), "installment": head_name,
+                          "due_date": inst.get("due_date"), "kind": "tuition"})
+        total = sum(it["amount"] for it in items)
         await db.fee_structures.insert_one({
             "id": gen_id(),
             "department_id": d["id"], "class_id": cls["id"],
-            "academic_year": ay, "items": items, "total": total,
+            "medium": medium, "class_name": cname, "stream": stream,
+            "academic_year": ay, "applies_to": applies_to,
+            "admission_fee": float(row.get("admission_fee", 0)),
+            "continuation_fee": float(row.get("continuation_fee", 0)),
+            "term_fee": float(row.get("term_fee", 0)),
+            "practical_fee": float(row.get("practical_fee", 0)),
+            "tuition_total": float(row.get("tuition_total", 0)),
+            "tuition_installments": row.get("tuition_installments", []),
+            "items": items, "total": total,
+            "active": True, "notes": row.get("notes"),
             "seeded_from": "fee_structure_2026.json", "created_at": now_iso(),
         })
         created_structures += 1
-    await audit(user, "seed", "fee_structure", "", {"classes": created_classes, "structures": created_structures, "skipped": skipped})
-    return {"classes_created": created_classes, "structures_created": created_structures, "skipped": skipped, "total_rows": len(rows)}
+    await audit(user, "seed", "fee_structure", "", {"classes": created_classes, "structures": created_structures, "skipped": skipped, "replace": replace})
+    return {"classes_created": created_classes, "structures_created": created_structures,
+            "skipped": skipped, "total_rows": len(rows), "academic_year": ay, "replaced": replace}
+
+
+@router.get("/fee-structures/resolve")
+async def resolve_structure_endpoint(
+    medium: str, class_name: str,
+    stream: Optional[str] = None,
+    first_year_in_college: bool = False,
+    academic_year: str = "2026-27",
+    user = Depends(get_current_user),
+):
+    """Utility: given (medium, class_name, stream, first_year_in_college), returns the resolved structure or 404."""
+    from core import resolve_fee_structure, canonical_medium, canonical_stream
+    med = canonical_medium(medium) or medium
+    stm = canonical_stream(stream) if stream else None
+    fs = await resolve_fee_structure(med, class_name, stm, first_year_in_college, academic_year)
+    if not fs:
+        raise HTTPException(404, f"No structure for {med} · {class_name}" + (f" · {stm}" if stm else ""))
+    return fs

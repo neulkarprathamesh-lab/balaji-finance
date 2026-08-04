@@ -38,6 +38,83 @@ CONFIG_COLLECTIONS = [
     "settings", "bus_routes",
 ]
 
+# ---------------- Medium & class canonicalisation ----------------
+# Accepted spellings (case-insensitive) → canonical value.
+MEDIUM_ALIASES: Dict[str, str] = {
+    "english medium": "English Medium",
+    "english":        "English Medium",
+    "eng":            "English Medium",
+    "em":             "English Medium",
+    "semi medium":            "Semi Medium (Marathi)",
+    "semi medium (marathi)":  "Semi Medium (Marathi)",
+    "semi":                    "Semi Medium (Marathi)",
+    "semi-english":            "Semi Medium (Marathi)",
+    "semi english":            "Semi Medium (Marathi)",
+    "marathi":                 "Semi Medium (Marathi)",
+    "marathi (semi)":          "Semi Medium (Marathi)",
+    "sm":                      "Semi Medium (Marathi)",
+    "junior college": "Junior College",
+    "jc":             "Junior College",
+    "college":        "Junior College",
+    "jr college":     "Junior College",
+    "jr. college":    "Junior College",
+}
+JC_STREAMS = {"arts", "commerce", "science", "electronics", "fisheries", "sci fisheries", "sci. fisheries"}
+JC_STREAM_CANONICAL = {
+    "arts": "Arts", "commerce": "Commerce", "science": "Science",
+    "electronics": "Electronics", "fisheries": "Fisheries",
+    "sci fisheries": "Fisheries", "sci. fisheries": "Fisheries",
+}
+
+def canonical_medium(raw: str) -> Optional[str]:
+    if not raw: return None
+    return MEDIUM_ALIASES.get(raw.strip().lower())
+
+def canonical_stream(raw: str) -> Optional[str]:
+    if not raw: return None
+    return JC_STREAM_CANONICAL.get(raw.strip().lower())
+
+# ---------------- Fee-structure resolver ----------------
+async def resolve_fee_structure(medium: str, class_name: str, stream: Optional[str] = None,
+                                 first_year_in_college: bool = False,
+                                 academic_year: str = "2026-27") -> Optional[dict]:
+    """Deterministic (medium, class_name, stream, applies_to) → fee structure lookup.
+    For JC 12th, `first_year_in_college=True` picks the "new_only" variant;
+    otherwise the "returning_only" variant. For all other classes, any 'all' row wins."""
+    q: Dict[str, Any] = {"medium": medium, "class_name": class_name, "academic_year": academic_year}
+    if stream:
+        q["stream"] = stream
+    matches = await db.fee_structures.find(q, {"_id": 0}).to_list(20)
+    if not matches:
+        return None
+    if medium == "Junior College" and class_name.replace(".", "").strip().lower() in ("class 12", "12th std", "12th"):
+        wanted = "new_only" if first_year_in_college else "returning_only"
+        for m in matches:
+            if m.get("applies_to") == wanted:
+                return m
+    for m in matches:
+        if m.get("applies_to", "all") == "all":
+            return m
+    return matches[0]
+
+def normalize_class_name(raw: str) -> str:
+    """Turn '5th', '5th Std', 'Class 5' etc. into 'Class 5' — a very forgiving mapper.
+    Preserves K.G. I / K.G. II / Nursery / Shishuvihar / Balwadi variants as-is."""
+    if not raw: return raw
+    r = raw.strip()
+    lower = r.lower()
+    kg_map = {"kg i": "K.G. I", "kgi": "K.G. I", "kg-i": "K.G. I", "kg 1": "K.G. I",
+              "kg ii": "K.G. II", "kgii": "K.G. II", "kg-ii": "K.G. II", "kg 2": "K.G. II"}
+    if lower in kg_map: return kg_map[lower]
+    ordinal_map = {"1st":"1","2nd":"2","3rd":"3","4th":"4","5th":"5","6th":"6",
+                   "7th":"7","8th":"8","9th":"9","10th":"10","11th":"11","12th":"12"}
+    for ordinal, num in ordinal_map.items():
+        if lower.startswith(ordinal + " ") or lower == ordinal + " std" or lower == ordinal:
+            return f"Class {num}"
+    if lower.startswith("class "):
+        return "Class " + r.split(" ", 1)[1].strip()
+    return r
+
 # ---------------- Utils ----------------
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -241,6 +318,9 @@ class StudentIn(BaseModel):
     department_id: str
     class_id: str
     section: Optional[str] = None
+    roll_no: Optional[str] = None
+    father_name: Optional[str] = None
+    mother_name: Optional[str] = None
     guardian_name: Optional[str] = None
     guardian_mobile: Optional[str] = None
     address: Optional[str] = None
@@ -248,6 +328,9 @@ class StudentIn(BaseModel):
     bus_route: Optional[str] = None
     admission_category: Optional[str] = None
     admission_date: Optional[str] = None
+    medium: Optional[str] = None            # canonical: English Medium / Semi Medium (Marathi) / Junior College
+    stream: Optional[str] = None            # JC only: Arts / Commerce / Science / Electronics / Fisheries
+    first_year_in_college: bool = False     # drives "new 12th admission" fee variant
 
 class ReceiptLineIn(BaseModel):
     fee_head_id: Optional[str] = None
