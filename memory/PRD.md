@@ -121,6 +121,15 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
   - StudentLookup now surfaces a **"Download Family Fee Slip (PDF)"** action button.
 
 
+
+### 2026-02-04 (continued 4) — Code-review critical fixes
+- Fixed 3 static-analysis "undefined variable" warnings in `server.py`:
+  - `dashboard()` line 1010 — `receipts_today_count` list-comprehension var renamed `r`→`x` to remove shadow of outer loop variable.
+  - `seed_2026_fee_structures()` line 1194 — `rows: List[dict] = []` default added before the try/except so `len(rows)` is safe on any code path.
+  - `defaulters_report()` line 1605 — generator expression var renamed `r`→`x` in `sum(x["outstanding"] for x in rows)` to remove shadow.
+- Verified by testing_agent with 10/10 pytest passing in `/app/backend/tests/test_undefined_var_fixes.py`; all 3 endpoints return 200 with correct schemas + smoke tests on `/students`, `/receipts`, `/imports/history`, `/students/{id}/siblings`, `/reports/day-end` pass.
+- The complexity-refactor "Important" section (bulk_import_fee_structures, outstanding_notices, seed_data, etc.) was intentionally NOT applied — that work touches ~5 hot code paths and would introduce regression risk on the many features just approved (Day-End, Fee Slip, Sibling Split, Import History). Keeping as a P2 backlog item to be scheduled once the feature set stabilises.
+
   - Bottom status strip: "Receipt number will be generated centrally"
 - Preserved the original comprehensive form (all 9 receipt types including Bus/Voucher/Refund) at `/new-receipt-advanced` via new `NewReceiptAdvanced.js`, reachable via the header link.
 - **ImportExcel.js**: uses a client-generated `batch_id` per file so undo is atomic; supports undo for **both** students and fee structures (uses the new `/bulk-delete` endpoints).
