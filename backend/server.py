@@ -1007,7 +1007,7 @@ async def dashboard(user = Depends(get_current_user)):
         dept_totals[r.get("department_name","-")] = dept_totals.get(r.get("department_name","-"),0) + r.get("total",0)
     return {
         "collection_today": collection_today,
-        "receipts_today_count": len([r for r in receipts_today if r.get("receipt_type") not in ("refund","debit_voucher")]),
+        "receipts_today_count": len([x for x in receipts_today if x.get("receipt_type") not in ("refund","debit_voucher")]),
         "pending_approvals": pending_adj + pending_ext,
         "pending_adjustments": pending_adj, "pending_extensions": pending_ext,
         "pending_big_waivers": await db.adjustments.count_documents({"status":"pending","amount":{"$gt": float((await get_settings_doc()).get("manager_waiver_cap", 5000) or 5000)}}),
@@ -1130,6 +1130,7 @@ async def rollover_fee_structures(body: RolloverIn, user = Depends(require_roles
 async def seed_2026_fee_structures(user = Depends(require_roles("administrator","manager"))):
     """Auto-load the 29 class fee structures from /app/memory/fee_structure_2026.json"""
     import json as _json
+    rows: List[dict] = []
     try:
         with open("/app/memory/fee_structure_2026.json", "r") as f:
             rows = _json.load(f)
@@ -1602,7 +1603,7 @@ async def defaulters_report(
             "fee": qamt, "paid": paid, "outstanding": outstanding,
         })
     rows.sort(key=lambda x: (-x["outstanding"]))
-    return {"count": len(rows), "total_outstanding": sum(r["outstanding"] for r in rows), "students": rows, "quarter": quarter}
+    return {"count": len(rows), "total_outstanding": sum(x["outstanding"] for x in rows), "students": rows, "quarter": quarter}
 
 @api.get("/reports/day-end")
 async def day_end_report(
