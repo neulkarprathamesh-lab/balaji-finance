@@ -1065,6 +1065,45 @@ async def archive_receipt_type(rtid: str, user = Depends(require_admin_pin)):
     await audit(user, "archive", "receipt_type", rtid, {"code": doc.get("code")})
     return {"archived": True}
 
+@api.post("/receipt-types/{rtid}/reset-sequence")
+async def reset_receipt_type_sequence(rtid: str, body: Dict[str, Any], user = Depends(require_admin_dual)):
+    """Manual Sequence Reset — DUAL-AUTH required (PIN + password).
+    Body: {new_number: int, reason: str}
+    Refuses if any receipt already exists at or above the new_number for this prefix + academic year."""
+    doc = await db.receipt_types.find_one({"id": rtid})
+    if not doc: raise HTTPException(404, "Not found")
+    try: new_number = int(body.get("new_number", 0))
+    except Exception: raise HTTPException(400, "new_number must be an integer")
+    reason = str(body.get("reason","")).strip()
+    if new_number < 1: raise HTTPException(400, "new_number must be >= 1")
+    if len(reason) < 5: raise HTTPException(400, "Reason must be at least 5 characters")
+    prefix = doc["code"]
+    academic_year = body.get("academic_year") or "2026-27"
+    year4 = academic_year.split("-")[0]
+    # Safety: check no existing receipt with number >= new_number
+    conflict = await db.receipts.find_one(
+        {"number": {"$regex": f"^{prefix}-{year4}-\\d{{6}}$"}},
+        sort=[("number", -1)]
+    )
+    highest_seq = 0
+    if conflict:
+        try: highest_seq = int(conflict["number"].rsplit("-", 1)[-1])
+        except Exception: highest_seq = 0
+    if new_number <= highest_seq:
+        raise HTTPException(409, f"Would create duplicate numbers — highest existing receipt is #{highest_seq:06d}. new_number must be > {highest_seq}.")
+    # Counter uses seq value that will be POST-INCREMENTED — so next issued will be (seq+1). We store new_number - 1.
+    counter_key = f"RT-{prefix}-{academic_year}"
+    prev = await db.counters.find_one({"key": counter_key}) or {"seq": 0}
+    prev_seq = prev.get("seq", 0)
+    await db.counters.update_one({"key": counter_key}, {"$set": {"seq": new_number - 1}}, upsert=True)
+    await db.receipt_types.update_one({"id": rtid}, {"$set": {"current_number": new_number - 1, "updated_at": now_iso()}})
+    await audit(user, "sequence_reset", "receipt_type", rtid, {
+        "code": prefix, "academic_year": academic_year,
+        "previous_seq": prev_seq, "new_next_number": new_number, "highest_existing": highest_seq,
+        "reason": reason,
+    })
+    return {"ok": True, "prefix": prefix, "previous_seq": prev_seq, "next_will_be": f"{prefix}-{year4}-{new_number:06d}", "reason": reason}
+
 @api.post("/receipt-types/reseed-defaults")
 async def reseed_receipt_types(user = Depends(require_admin_pin)):
     """Idempotent — only adds any DEFAULT_RECEIPT_TYPES rows whose prefix is missing."""

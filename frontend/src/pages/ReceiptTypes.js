@@ -29,6 +29,8 @@ export default function ReceiptTypes() {
   const [rows, setRows] = useState([]);
   const [editing, setEditing] = useState(null); // full row or 'new'
   const [prompt, setPrompt] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [resetSeq, setResetSeq] = useState(null);
 
   const load = () => api.get('/receipt-types?include_disabled=true').then(r => setRows(r.data)).catch(()=>toast.error('Failed to load'));
   useEffect(() => { load(); }, []);
@@ -111,13 +113,17 @@ export default function ReceiptTypes() {
 
       {editing && <EditModal row={editing === 'new' ? empty : editing} isNew={editing === 'new'}
         onCancel={() => setEditing(null)}
+        onPreview={(current) => setPreview(current)}
+        onResetSeq={(cur) => setResetSeq(cur)}
         onSave={(body) => withPin(editing === 'new' ? 'Create Receipt Type' : 'Edit Receipt Type', 'This action modifies receipt configuration.', (h) => doSave(body, h))} />}
+      {preview && <PreviewModal rt={preview} onClose={()=>setPreview(null)} />}
+      {resetSeq && <ResetSequenceModal rt={resetSeq} onClose={()=>setResetSeq(null)} onDone={load} />}
       <AdminPinPrompt prompt={prompt} onClose={()=>setPrompt(null)} />
     </>
   );
 }
 
-const EditModal = ({ row, isNew, onCancel, onSave }) => {
+const EditModal = ({ row, isNew, onCancel, onSave, onResetSeq, onPreview }) => {
   const [f, setF] = useState({ ...empty, ...row, fields: { ...empty.fields, ...(row.fields || {}) } });
   const [tab, setTab] = useState('general');
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
@@ -179,7 +185,14 @@ const EditModal = ({ row, isNew, onCancel, onSave }) => {
               <Field label="Auto-Reset on new Academic Year" span={2}>
                 <label className="inline-flex items-center gap-2 h-9"><input type="checkbox" checked={!!f.auto_reset_yearly} onChange={e=>set('auto_reset_yearly', e.target.checked)} /> Sequence resets to Starting Number every academic year</label>
               </Field>
-              <div className="col-span-2 p-3 bg-amber-50 border border-amber-200 rounded text-[12px] text-amber-900"><b>Manual reset</b> of the current number is a very high-risk action — it will require Admin PIN + Password (dual authorisation) and is coming in Phase 3.</div>
+              <div className="col-span-2 border-t border-slate-200 pt-3 mt-1">
+                <div className="p-3 bg-red-50 border-2 border-red-300 rounded">
+                  <div className="flex items-center gap-2 mb-2"><Shield className="w-4 h-4 text-red-700" /><span className="font-heading font-bold text-red-900 text-sm">Manual Sequence Reset</span></div>
+                  <div className="text-[12px] text-red-800 mb-2">High-risk. Requires <b>dual authorisation</b> (Admin PIN + Password) and a reason. Prevents duplicate numbers by refusing values ≤ highest existing receipt.</div>
+                  {!isNew && <button type="button" data-testid="rtm-reset-seq" onClick={() => onResetSeq(row)} className="h-8 px-3 border border-red-600 bg-white text-red-700 hover:bg-red-100 rounded text-[12px] font-semibold">Reset Current Sequence…</button>}
+                  {isNew && <div className="text-[11px] text-red-700 italic">Save this receipt type first before resetting the sequence.</div>}
+                </div>
+              </div>
             </div>
           )}
           {tab==='fields' && (
@@ -196,9 +209,12 @@ const EditModal = ({ row, isNew, onCancel, onSave }) => {
             </div>
           )}
         </div>
-        <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="h-9 px-4 border border-slate-300 rounded text-sm">Cancel</button>
-          <button type="submit" data-testid="rtm-save" className="h-9 px-4 bg-slate-900 text-white rounded text-sm font-semibold flex items-center gap-1.5"><Save className="w-4 h-4" /> Save (requires PIN)</button>
+        <div className="px-5 py-3 border-t border-slate-200 flex justify-between gap-2">
+          <button type="button" onClick={() => onPreview(f)} data-testid="rtm-preview" className="h-9 px-4 border border-slate-300 rounded text-sm hover:bg-slate-50 flex items-center gap-1.5"><Eye className="w-4 h-4" /> Live Preview</button>
+          <div className="flex gap-2">
+            <button type="button" onClick={onCancel} className="h-9 px-4 border border-slate-300 rounded text-sm">Cancel</button>
+            <button type="submit" data-testid="rtm-save" className="h-9 px-4 bg-slate-900 text-white rounded text-sm font-semibold flex items-center gap-1.5"><Save className="w-4 h-4" /> Save (requires PIN)</button>
+          </div>
         </div>
       </form>
     </div>
@@ -210,3 +226,173 @@ const Field = ({ label, children, span = 1, required = false }) => (
     {children}
   </label>
 );
+
+// ---------- Live Preview Modal ----------
+const PreviewModal = ({ rt, onClose }) => {
+  const [testCopy, setTestCopy] = useState(false);
+  const doTestPrint = () => { setTestCopy(true); setTimeout(() => { window.print(); setTestCopy(false); }, 200); };
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+  const paper = rt?.paper_size || 'A4';
+  const orient = rt?.orientation || 'portrait';
+  const F = rt?.fields || {};
+  const show = (k) => F[k] !== false;
+  const qrOn = rt?.qr_enabled !== false;
+  const barcodeOn = !!rt?.barcode_enabled;
+  const wmOn = !!rt?.watermark_enabled || testCopy;
+  const wmText = testCopy ? 'TEST COPY' : (rt?.watermark_text || 'OFFICIAL');
+  const sampleNumber = `${rt?.code || 'PRE'}-2026-000999`;
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-50 flex items-start justify-center p-4 overflow-y-auto print:relative print:bg-white print:p-0" onClick={onClose}>
+      <style>{`@media print { @page { size: ${paper==='Thermal80'?'80mm auto':`${paper} ${orient}`}; margin: 8mm; } .no-print { display: none !important; } }`}</style>
+      <div className="bg-white rounded-lg shadow-2xl w-full max-w-[820px] my-6 print:my-0 print:max-w-none print:shadow-none" onClick={e=>e.stopPropagation()}>
+        <div className="px-4 py-2 border-b border-slate-200 flex items-center justify-between no-print">
+          <div>
+            <div className="font-heading font-semibold">Live Preview — {rt?.name || 'New receipt type'}</div>
+            <div className="text-[11px] text-slate-500">Paper: {paper} · {orient} · reflects unsaved changes · WYSIWYG</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={doTestPrint} data-testid="rtm-test-print" className="h-9 px-4 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-semibold">Test Print</button>
+            <button onClick={()=>window.print()} className="h-9 px-4 bg-slate-900 text-white rounded text-sm font-semibold">Print</button>
+            <button onClick={onClose} className="h-9 px-3 border border-slate-300 rounded text-sm">Close</button>
+          </div>
+        </div>
+        <div className="p-6 relative text-[13px] text-slate-900">
+          {wmOn && (
+            <div aria-hidden className="absolute inset-0 pointer-events-none flex items-center justify-center print:flex" style={{ zIndex: 0 }}>
+              <div className={`font-heading font-black text-[120px] tracking-tighter rotate-[-24deg] ${testCopy ? 'text-red-600 opacity-30' : 'text-slate-900 opacity-[0.06]'} select-none`}>{wmText}</div>
+            </div>
+          )}
+          <div className="relative bg-slate-900 text-white flex items-center justify-between px-4 py-2 -mx-6 -mt-6 mb-4">
+            <div className="flex items-center gap-2.5">
+              <img src="/school-logo.jpeg" alt="logo" className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700" />
+              <div className="leading-tight">
+                <div className="font-heading font-semibold text-[13px]">{rt?.name || 'Balaji Convent · Receipt Manager'}</div>
+                <div className="text-[9px] uppercase tracking-widest text-slate-300">Official Fee Receipt</div>
+              </div>
+            </div>
+            <div className="text-right text-[10px] leading-tight">
+              <div className="font-mono font-bold text-[12px]">{sampleNumber}</div>
+              <div className="text-slate-300">{dateStr}</div>
+            </div>
+          </div>
+          {rt?.header_text && <div className="relative text-center text-[11px] font-semibold uppercase tracking-widest text-slate-700 pb-2 border-b border-slate-200 mb-2">{rt.header_text}</div>}
+          <div className="relative grid grid-cols-12 gap-3 pb-4 border-b-2 border-slate-900">
+            <div className="col-span-6 flex items-start gap-3">
+              <img src="/school-logo.jpeg" alt="logo" className="w-20 h-20 rounded-full object-cover ring-1 ring-slate-300" />
+              <div>
+                <div className="font-heading font-black text-xl tracking-tight uppercase">{(rt?.name || 'BALAJI CONVENT').toUpperCase()}</div>
+                <div className="text-[13px] font-bold tracking-wide uppercase text-slate-800">BUTIBORI, NAGPUR</div>
+                <div className="text-[10px] text-slate-600">{rt?.department_name || '—'}</div>
+                {rt?.description && <div className="text-[10px] text-slate-600">{rt.description}</div>}
+              </div>
+            </div>
+            <div className="col-span-3 text-center border-x border-slate-300 px-3">
+              <div className="inline-block bg-slate-900 text-white px-4 py-1 font-bold tracking-widest text-[13px]">FEE RECEIPT</div>
+            </div>
+            <div className="col-span-3 text-right text-[11px]">
+              <div className="text-slate-500 uppercase tracking-widest text-[9px]">Receipt No.</div>
+              <div className="font-mono font-bold">{sampleNumber}</div>
+              {qrOn && <div className="flex justify-end mt-1"><div className="w-14 h-14 bg-slate-200 rounded flex items-center justify-center text-[9px] text-slate-500">QR</div></div>}
+            </div>
+          </div>
+          <div className="relative mt-3 border border-slate-300">
+            <div className="bg-slate-100 border-b border-slate-300 text-center py-1 text-[11px] font-bold tracking-widest">DETAILS</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 p-3 text-[12px]">
+              {show('admission_no') && <div><span className="text-slate-500">ADMISSION NO. :</span> <b className="font-mono">BC-EP-999</b></div>}
+              {show('parent_name') && <div><span className="text-slate-500">PARENT :</span> <b>Rajesh Sharma</b></div>}
+              {show('class') && <div><span className="text-slate-500">CLASS :</span> <b>Class 3</b></div>}
+              {show('mobile') && <div><span className="text-slate-500">MOBILE :</span> <b className="font-mono">98765XXXXX</b></div>}
+              {show('roll_no') && <div><span className="text-slate-500">ROLL NO. :</span> <b>15</b></div>}
+              {show('department') && <div><span className="text-slate-500">DEPT :</span> <b>{rt?.department_name || 'English Primary'}</b></div>}
+              {show('session') && <div><span className="text-slate-500">SESSION :</span> <b>2026-27</b></div>}
+              {show('academic_year') && <div><span className="text-slate-500">ACADEMIC YEAR :</span> <b>2026-27</b></div>}
+            </div>
+          </div>
+          {barcodeOn && (
+            <div className="relative mt-3 text-center">
+              <div className="inline-block h-8" style={{ background: 'repeating-linear-gradient(to right, #000 0 2px, #fff 2px 3px, #000 3px 5px, #fff 5px 6px, #000 6px 8px, #fff 8px 9px, #000 9px 12px, #fff 12px 13px)', width: '360px' }} />
+              <div className="font-mono text-[10px] tracking-[0.2em] mt-0.5">{sampleNumber}</div>
+            </div>
+          )}
+          <div className="relative grid grid-cols-12 gap-3 mt-3 text-[12px]">
+            <div className="col-span-8 border border-slate-400 p-2">
+              {show('fee_head') && <div className="flex justify-between border-b border-slate-200 py-1"><span>Tuition Q1</span><span className="font-mono">₹ 2,700.00</span></div>}
+              <div className="flex justify-between font-bold pt-1"><span>TOTAL</span><span className="font-mono">₹ 2,700.00</span></div>
+            </div>
+            <div className="col-span-4 border border-slate-400">
+              {show('amount_in_words') && <div className="p-2 border-b border-slate-200"><div className="text-[9px] uppercase tracking-widest text-slate-500">Amount in Words</div><div className="text-[11px] font-semibold">Two Thousand Seven Hundred Only</div></div>}
+              {show('payment_mode') && <div className="p-2 border-b border-slate-200"><div className="text-[9px] uppercase tracking-widest text-slate-500">Payment Mode</div><div className="text-[12px] font-semibold">Cash</div></div>}
+              {show('transaction_id') && <div className="p-2 border-b border-slate-200"><div className="text-[9px] uppercase tracking-widest text-slate-500">Transaction ID</div><div className="text-[10px] font-mono">CASH/{sampleNumber}</div></div>}
+              <div className="p-2 bg-slate-900 text-white text-center"><div className="text-[9px] uppercase tracking-widest">Amount Received</div><div className="font-heading font-bold font-mono">₹ 2,700.00</div></div>
+            </div>
+          </div>
+          {rt?.signature_area_enabled !== false && (
+            <div className="relative grid grid-cols-3 gap-6 mt-4 text-[11px]">
+              <div><b className="text-[10px] tracking-widest">NOTES:</b><ul className="list-disc pl-4 text-slate-600"><li>{rt?.computer_generated_note || 'This is a computer generated receipt.'}</li></ul></div>
+              {show('cashier_name') && <div className="text-center pt-6"><div className="border-t border-slate-500 pt-1 text-[10px] tracking-widest">RECEIVED BY</div><div className="text-[10px] text-slate-600">Cashier</div></div>}
+              {show('authorized_by') && <div className="text-center pt-6"><div className="border-t border-slate-500 pt-1 text-[10px] tracking-widest">AUTHORIZED BY</div></div>}
+            </div>
+          )}
+          {rt?.footer_text && <div className="relative text-center text-[10px] italic text-slate-600 mt-2 border-t border-slate-200 pt-1">{rt.footer_text}</div>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------- Reset Sequence Modal (dual-auth) ----------
+const ResetSequenceModal = ({ rt, onClose, onDone }) => {
+  const [newNum, setNewNum] = useState('');
+  const [reason, setReason] = useState('');
+  const [pin, setPin] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const preview = newNum ? `${rt.code}-2026-${String(newNum).padStart(6,'0')}` : '—';
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!confirmed) return toast.error('Please tick the confirmation checkbox');
+    if (!newNum || Number(newNum) < 1) return toast.error('Enter a valid new number');
+    if (reason.trim().length < 5) return toast.error('Reason must be at least 5 characters');
+    if (pin.length < 4) return toast.error('PIN required');
+    if (!pwd) return toast.error('Password required');
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/receipt-types/${rt.id}/reset-sequence`,
+        { new_number: Number(newNum), reason: reason.trim(), academic_year: '2026-27' },
+        { headers: { 'X-Admin-PIN': pin, 'X-Admin-Password': pwd }});
+      toast.success(`Sequence reset — next receipt will be ${data.next_will_be} (was seq ${data.previous_seq})`);
+      onDone(); onClose();
+    } catch (e) { toast.error(e?.response?.data?.detail || 'Reset failed'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <form onSubmit={submit} onClick={e=>e.stopPropagation()} className="bg-white rounded-lg shadow-2xl w-full max-w-md border-t-4 border-red-600">
+        <div className="p-5 border-b border-slate-200">
+          <div className="font-heading font-bold text-slate-900 flex items-center gap-2"><Shield className="w-5 h-5 text-red-600" /> Reset Receipt Sequence — {rt.code}</div>
+          <div className="text-[12px] text-slate-600 mt-1">High-risk. Dual-auth + audit + reason mandatory. New number must be higher than the highest issued.</div>
+        </div>
+        <div className="p-5 space-y-3 text-[13px]">
+          <div className="bg-slate-50 border border-slate-200 rounded p-2 text-[12px]">
+            <div>Current stored counter: <b className="font-mono">{rt.current_number ?? '—'}</b></div>
+            <div>Next issued preview: <b className="font-mono text-emerald-700" data-testid="reset-preview">{preview}</b></div>
+          </div>
+          <Field label="New Starting Number (next issued number)" required><input data-testid="reset-new" type="number" min="1" value={newNum} onChange={e=>setNewNum(e.target.value)} className="w-full h-9 px-3 border border-slate-300 rounded font-mono" /></Field>
+          <Field label="Reason (mandatory, ≥5 chars)" required><textarea data-testid="reset-reason" value={reason} onChange={e=>setReason(e.target.value)} rows={2} className="w-full px-3 py-2 border border-slate-300 rounded text-sm" placeholder="e.g. Physical receipt book started at 5000 this year" /></Field>
+          <Field label="Administrator PIN" required><input data-testid="reset-pin" type="password" inputMode="numeric" value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} maxLength={8} className="w-full h-9 px-3 border-2 border-red-300 rounded font-mono tracking-widest text-center" /></Field>
+          <Field label="Administrator Password" required><input data-testid="reset-pwd" type="password" value={pwd} onChange={e=>setPwd(e.target.value)} className="w-full h-9 px-3 border-2 border-red-300 rounded" /></Field>
+          <label className="flex items-start gap-2 text-[12px] text-slate-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            <input type="checkbox" data-testid="reset-confirm" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} />
+            <span>I understand this will change the next receipt number for <b>{rt.code}</b>. Duplicate numbers are prevented server-side. This action is logged with my name.</span>
+          </label>
+        </div>
+        <div className="p-4 border-t border-slate-200 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="h-9 px-4 border border-slate-300 rounded text-sm">Cancel</button>
+          <button type="submit" data-testid="reset-submit" disabled={busy} className="h-9 px-4 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white rounded text-sm font-semibold">Reset Sequence</button>
+        </div>
+      </form>
+    </div>
+  );
+};
