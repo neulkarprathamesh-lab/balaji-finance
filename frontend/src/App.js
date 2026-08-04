@@ -27,6 +27,7 @@ import AssignStudents from '@/pages/AssignStudents';
 import FeeBrochure from '@/pages/FeeBrochure';
 import Defaulters from '@/pages/Defaulters';
 import Lookup from '@/pages/Lookup';
+import KioskPoster from '@/pages/KioskPoster';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="settings" element={<Protected roles={['administrator']}><Settings /></Protected>} />
             <Route path="fee-structure" element={<Protected roles={['administrator','manager','accountant']}><FeeStructure /></Protected>} />
             <Route path="fee-brochure" element={<FeeBrochure />} />
+            <Route path="kiosk-poster" element={<Protected roles={['administrator','manager','accountant']}><KioskPoster /></Protected>} />
             <Route path="assign-students" element={<Protected roles={['administrator','manager','accountant']}><AssignStudents /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>

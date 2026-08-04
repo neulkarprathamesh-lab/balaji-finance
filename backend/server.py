@@ -704,8 +704,14 @@ async def list_adjustments(status: Optional[str] = None, user = Depends(get_curr
 
 @api.post("/adjustments/{aid}/approve")
 async def approve_adjustment(aid: str, user = Depends(require_roles("administrator","manager"))):
+    adj = await db.adjustments.find_one({"id": aid})
+    if not adj: raise HTTPException(404, "Not found")
+    # Waiver cap: managers can approve up to ₹5,000; higher needs administrator
+    MANAGER_CAP = 5000.0
+    if user["role"] == "manager" and float(adj.get("amount", 0)) > MANAGER_CAP:
+        raise HTTPException(403, f"Adjustments over ₹{int(MANAGER_CAP):,} require administrator approval")
     await db.adjustments.update_one({"id": aid}, {"$set":{"status":"approved","approved_by": user["id"],"approved_by_name": user["name"],"approved_at": now_iso()}})
-    await audit(user, "approve", "adjustment", aid)
+    await audit(user, "approve", "adjustment", aid, {"amount": adj.get("amount")})
     return {"ok": True}
 
 @api.post("/adjustments/{aid}/reject")
