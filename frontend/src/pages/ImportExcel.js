@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import api from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
 import { toast } from 'sonner';
-import { Download, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Undo2 } from 'lucide-react';
+import { Download, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Undo2, History } from 'lucide-react';
 
 const KINDS = {
   students: {
@@ -165,10 +166,13 @@ export default function ImportExcel() {
     <>
       <PageHeader title="Excel Import" subtitle="Download the template · fill in Excel · upload with live progress"
         actions={
-          <div className="flex gap-1 border border-slate-300 rounded overflow-hidden no-print">
-            {Object.entries(KINDS).map(([k, v]) => (
-              <button key={k} data-testid={`imp-tab-${k}`} onClick={() => { setKind(k); reset(); }} className={`h-9 px-4 text-sm ${kind===k ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}>{v.label}</button>
-            ))}
+          <div className="flex gap-2 no-print">
+            <Link to="/imports-history" data-testid="ie-history-link" className="h-9 px-3 border border-slate-300 rounded text-sm hover:bg-white flex items-center gap-1.5"><History className="w-4 h-4" /> Import History</Link>
+            <div className="flex gap-1 border border-slate-300 rounded overflow-hidden">
+              {Object.entries(KINDS).map(([k, v]) => (
+                <button key={k} data-testid={`imp-tab-${k}`} onClick={() => { setKind(k); reset(); }} className={`h-9 px-4 text-sm ${kind===k ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}>{v.label}</button>
+              ))}
+            </div>
           </div>
         }
       />

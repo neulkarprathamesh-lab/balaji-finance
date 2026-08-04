@@ -31,6 +31,7 @@ import Lookup from '@/pages/Lookup';
 import KioskPoster from '@/pages/KioskPoster';
 import StudentLookup from '@/pages/StudentLookup';
 import ImportExcel from '@/pages/ImportExcel';
+import ImportsHistory from '@/pages/ImportsHistory';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="kiosk-poster" element={<Protected roles={['administrator','manager','accountant']}><KioskPoster /></Protected>} />
             <Route path="assign-students" element={<Protected roles={['administrator','manager','accountant']}><AssignStudents /></Protected>} />
             <Route path="import-excel" element={<Protected roles={['administrator','manager','accountant']}><ImportExcel /></Protected>} />
+            <Route path="imports-history" element={<Protected roles={['administrator','manager','accountant']}><ImportsHistory /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>
           <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />

@@ -120,6 +120,21 @@ function FeeReceipt({ r }) {
 
   return (
     <div className="text-slate-900 text-[13px]">
+      {/* NAVY BRAND BAND (matches cashier UI) */}
+      <div className="bg-slate-900 text-white flex items-center justify-between px-4 py-2 -mx-6 -mt-6 mb-4 print:mx-0 print:mt-0">
+        <div className="flex items-center gap-2.5">
+          <img src={LOGO} alt="logo" className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700" />
+          <div className="leading-tight">
+            <div className="font-heading font-semibold text-[13px]">Balaji Convent · School Receipt Manager</div>
+            <div className="text-[9px] uppercase tracking-widest text-slate-300">Official Fee Receipt</div>
+          </div>
+        </div>
+        <div className="text-right text-[10px] leading-tight">
+          <div className="font-mono font-bold text-[12px]">{r.number}</div>
+          <div className="text-slate-300">{dateStr}</div>
+        </div>
+      </div>
+
       {/* HEADER */}
       <div className="grid grid-cols-12 gap-3 pb-4 border-b-2 border-slate-900">
         <div className="col-span-6 flex items-start gap-3">

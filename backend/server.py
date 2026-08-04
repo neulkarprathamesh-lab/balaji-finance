@@ -666,6 +666,29 @@ async def latest_import_batch(kind: Literal["students","fee_structures"], user =
     doc = await db.import_batches.find_one({"type": kind, "undone_at": {"$exists": False}}, {"_id":0}, sort=[("created_at", -1)])
     return doc or {}
 
+@api.get("/imports/history")
+async def imports_history(
+    kind: Optional[Literal["students","fee_structures"]] = None,
+    limit: int = 100,
+    user = Depends(get_current_user),
+):
+    q: Dict[str, Any] = {}
+    if kind: q["type"] = kind
+    return await db.import_batches.find(q, {"_id":0}).sort("created_at", -1).limit(limit).to_list(limit)
+
+@api.get("/students/{sid}/siblings")
+async def student_siblings(sid: str, user = Depends(get_current_user)):
+    """Return other active students sharing the same guardian_mobile."""
+    s = await db.students.find_one({"id": sid}, {"_id":0})
+    if not s: raise HTTPException(404, "Not found")
+    gm = (s.get("guardian_mobile") or "").strip()
+    if not gm: return {"siblings": []}
+    others = await db.students.find(
+        {"guardian_mobile": gm, "status": "active", "id": {"$ne": sid}},
+        {"_id":0}
+    ).to_list(20)
+    return {"siblings": others}
+
 @api.post("/students/bulk-reassign")
 async def bulk_reassign_students(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
     """Body: {student_ids: [], to_class_id, to_fee_structure_id?}"""

@@ -5,7 +5,7 @@ import { inr } from '@/components/Layout';
 import { useAuth } from '@/context/AuthContext';
 import {
   Search, GraduationCap, Phone, IdCard, CheckCircle2, Info, Printer,
-  FileText, Banknote, Smartphone, CreditCard, Sparkles, Settings2, ArrowRight, Wallet, ArrowUpDown
+  FileText, Banknote, Smartphone, CreditCard, Sparkles, Settings2, Wallet, ArrowUpDown, Users, Zap
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -21,12 +21,43 @@ const MODES = [
   { v: 'card', l: 'Card', icon: CreditCard },
 ];
 
-// Priority order for auto-allocation
 const PRIORITY = ['tuition', 'transport', 'bus', 'computer', 'activity', 'library'];
 const priorityIndex = (name = '') => {
   const n = String(name).toLowerCase();
   for (let i = 0; i < PRIORITY.length; i++) if (n.includes(PRIORITY[i])) return i;
-  return PRIORITY.length; // unknown -> last
+  return PRIORITY.length;
+};
+
+// Build "lines" for a single student from their ledger
+const linesFromLedger = (l, forTab, studentId, studentName) => {
+  if (!l) return [];
+  const fs = l.fee_structure;
+  if (!fs || !Array.isArray(fs.items) || !fs.items.length) return [];
+  const paidByHead = {};
+  for (const r of (l.receipts || [])) {
+    if (r.status === 'cancelled') continue;
+    if (['refund','debit_voucher'].includes(r.receipt_type)) continue;
+    for (const line of (r.lines || [])) {
+      const key = (line.fee_head_name || '').trim().toLowerCase();
+      paidByHead[key] = (paidByHead[key] || 0) + Number(line.amount || 0);
+    }
+  }
+  const rows = fs.items.map((it, i) => {
+    const label = it.fee_head_name || it.name || `Head ${i+1}`;
+    const total = Number(it.amount || 0);
+    const paid = paidByHead[label.trim().toLowerCase()] || 0;
+    const outstanding = Math.max(0, total - paid);
+    return {
+      key: `${studentId}::fh-${i}`,
+      student_id: studentId,
+      student_name: studentName,
+      label, outstanding,
+      include: outstanding > 0,
+      amount: outstanding,
+    };
+  }).filter(r => r.outstanding > 0);
+  rows.sort((a, b) => priorityIndex(a.label) - priorityIndex(b.label));
+  return rows;
 };
 
 export default function NewReceipt() {
@@ -35,19 +66,18 @@ export default function NewReceipt() {
   const { user } = useAuth();
   const [tab, setTab] = useState('school');
 
-  // Student search + selection
   const [q, setQ] = useState('');
   const [results, setResults] = useState([]);
   const [student, setStudent] = useState(null);
   const [ledger, setLedger] = useState(null);
+  const [siblings, setSiblings] = useState([]);           // [{student, ledger}]
+  const [includeSiblings, setIncludeSiblings] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Fee heads (allocated rows)
-  const [lines, setLines] = useState([]);       // [{key,label,outstanding,include,amount}]
-  const [amountPaying, setAmountPaying] = useState(''); // string for input
-  const [installments, setInstallments] = useState([]); // for tab='installment'
+  const [lines, setLines] = useState([]);
+  const [amountPaying, setAmountPaying] = useState('');
+  const [installments, setInstallments] = useState([]);
 
-  // Payment
   const [mode, setMode] = useState('cash');
   const [ref, setRef] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -56,12 +86,9 @@ export default function NewReceipt() {
 
   useEffect(() => {
     const sid = sp.get('student');
-    if (sid) {
-      api.get(`/students/${sid}`).then(r => selectStudent(r.data));
-    }
+    if (sid) api.get(`/students/${sid}`).then(r => selectStudent(r.data));
   }, []);
 
-  // Debounced search
   useEffect(() => {
     if (!q || q.length < 2) { setResults([]); return; }
     clearTimeout(debounceRef.current);
@@ -72,13 +99,32 @@ export default function NewReceipt() {
   }, [q]);
 
   const selectStudent = async (s) => {
-    setStudent(s); setResults([]); setQ('');
+    setStudent(s); setResults([]); setQ(''); setIncludeSiblings(false); setSiblings([]);
     setBusy(true);
     try {
-      const { data } = await api.get(`/students/${s.id}/ledger`);
-      setLedger(data);
-      buildLines(data, tab);
-      // pull student's pending extension installments too
+      const [ledResp, sibResp] = await Promise.all([
+        api.get(`/students/${s.id}/ledger`),
+        api.get(`/students/${s.id}/siblings`).catch(() => ({ data: { siblings: [] } })),
+      ]);
+      setLedger(ledResp.data);
+      const primaryLines = linesFromLedger(ledResp.data, tab, s.id, s.name);
+      setLines(primaryLines);
+      // Auto-suggest: pre-fill amountPaying with the FIRST (highest-priority) pending head's outstanding
+      if (tab === 'school' && primaryLines.length) {
+        const first = primaryLines[0];
+        const suggested = String(Math.round(Number(first.outstanding || 0)));
+        setAmountPaying(suggested);
+        setTimeout(() => distribute(suggested, primaryLines), 0);
+      } else {
+        setAmountPaying('');
+      }
+      // Load siblings' ledgers in the background
+      const sibs = sibResp.data?.siblings || [];
+      if (sibs.length) {
+        const sibLedgers = await Promise.all(sibs.map(x => api.get(`/students/${x.id}/ledger`).then(r => ({ student: x, ledger: r.data })).catch(() => null)));
+        setSiblings(sibLedgers.filter(Boolean));
+      }
+      // Extensions
       try {
         const ext = await api.get(`/extensions?student_id=${s.id}&status=approved`);
         const pending = (ext.data || []).flatMap(e => (e.installments || []).map((it, idx) => ({
@@ -90,45 +136,27 @@ export default function NewReceipt() {
     finally { setBusy(false); }
   };
 
-  const buildLines = (l, forTab) => {
-    if (!l) { setLines([]); return; }
+  // Rebuild lines when siblings toggle changes or tab changes
+  const rebuildLines = (forTab, withSiblings) => {
+    if (!ledger || !student) { setLines([]); return; }
     if (forTab === 'misc') {
-      // start with a single blank custom line
-      setLines([{ key: 'row-1', label: '', outstanding: 0, include: true, amount: '' }]);
+      setLines([{ key: 'row-1', student_id: student.id, student_name: student.name, label: '', outstanding: 0, include: true, amount: '' }]);
       return;
     }
-    if (forTab === 'installment') {
-      setLines([]); return;
-    }
-    // Regular Fee: derive pending per fee head from fee_structure vs receipts
-    const fs = l.fee_structure;
-    if (!fs || !Array.isArray(fs.items) || !fs.items.length) {
-      setLines([]); return;
-    }
-    // sum paid per head from receipts
-    const paidByHead = {};
-    for (const r of (l.receipts || [])) {
-      if (r.status === 'cancelled') continue;
-      if (['refund','debit_voucher'].includes(r.receipt_type)) continue;
-      for (const line of (r.lines || [])) {
-        const key = (line.fee_head_name || '').trim().toLowerCase();
-        paidByHead[key] = (paidByHead[key] || 0) + Number(line.amount || 0);
+    if (forTab === 'installment') { setLines([]); return; }
+    let all = linesFromLedger(ledger, forTab, student.id, student.name);
+    if (withSiblings) {
+      for (const s of siblings) {
+        all = all.concat(linesFromLedger(s.ledger, forTab, s.student.id, s.student.name));
       }
+      // sort by priority across all students
+      all.sort((a, b) => priorityIndex(a.label) - priorityIndex(b.label));
     }
-    const rows = fs.items.map((it, i) => {
-      const label = it.fee_head_name || it.name || `Head ${i+1}`;
-      const total = Number(it.amount || 0);
-      const paid = paidByHead[label.trim().toLowerCase()] || 0;
-      const outstanding = Math.max(0, total - paid);
-      return { key: `fh-${i}`, label, outstanding, include: outstanding > 0, amount: outstanding };
-    }).filter(r => r.outstanding > 0);
-    // sort by priority
-    rows.sort((a, b) => priorityIndex(a.label) - priorityIndex(b.label));
-    setLines(rows);
+    setLines(all);
   };
 
-  // Reset lines when tab changes
-  useEffect(() => { if (ledger) buildLines(ledger, tab); setAmountPaying(''); }, [tab]);
+  useEffect(() => { if (student && ledger) { rebuildLines(tab, includeSiblings); if (tab !== 'school') setAmountPaying(''); } }, [tab]);
+  useEffect(() => { if (student && ledger) { rebuildLines(tab, includeSiblings); if (amountPaying) setTimeout(() => distribute(amountPaying), 30); } }, [includeSiblings, siblings.length]);
 
   const totalPending = useMemo(
     () => lines.reduce((s, l) => s + Number(l.outstanding || 0), 0)
@@ -141,12 +169,10 @@ export default function NewReceipt() {
     [lines, installments, tab]
   );
 
-  // Amount Paying auto-distribution across included heads in priority order
-  const distribute = (val) => {
+  const distribute = (val, baseLines) => {
     let remaining = Math.max(0, Number(val) || 0);
-    // reset current amounts (only for included lines), preserving priority order already in state
-    const sorted = [...lines].sort((a, b) => priorityIndex(a.label) - priorityIndex(b.label));
-    const next = sorted.map(l => {
+    const base = (baseLines || lines).slice().sort((a, b) => priorityIndex(a.label) - priorityIndex(b.label));
+    const next = base.map(l => {
       if (!l.include) return { ...l, amount: 0 };
       const take = Math.min(remaining, l.outstanding);
       remaining -= take;
@@ -155,20 +181,21 @@ export default function NewReceipt() {
     setLines(next);
   };
 
-  const onAmountPayingChange = (v) => {
-    setAmountPaying(v);
-    if (tab === 'school') distribute(v);
-  };
-
+  const onAmountPayingChange = (v) => { setAmountPaying(v); if (tab === 'school') distribute(v); };
   const payFullOutstanding = () => {
     const t = lines.reduce((s, l) => s + (l.include ? Number(l.outstanding || 0) : 0), 0);
-    setAmountPaying(String(t));
-    distribute(t);
+    setAmountPaying(String(t)); distribute(t);
+  };
+  const suggestNextQuarter = () => {
+    // Auto-suggest = outstanding of highest-priority pending head (currently first row)
+    const first = lines.find(l => l.include && l.outstanding > 0);
+    if (!first) return;
+    const v = String(Math.round(first.outstanding));
+    setAmountPaying(v); distribute(v);
   };
 
   const toggleInclude = (key) => {
     setLines(prev => prev.map(l => l.key === key ? { ...l, include: !l.include, amount: !l.include ? l.outstanding : 0 } : l));
-    // re-distribute after toggle if a paying amount was set
     setTimeout(() => amountPaying && distribute(amountPaying), 0);
   };
   const setLineAmount = (key, v) => {
@@ -176,7 +203,7 @@ export default function NewReceipt() {
     setLines(prev => prev.map(l => l.key === key ? { ...l, amount: cleaned === '' ? 0 : Math.min(cleaned, l.outstanding) } : l));
   };
   const setLineLabel = (key, v) => setLines(prev => prev.map(l => l.key === key ? { ...l, label: v } : l));
-  const addCustomLine = () => setLines(prev => [...prev, { key: `row-${Date.now()}`, label: '', outstanding: 0, include: true, amount: '' }]);
+  const addCustomLine = () => setLines(prev => [...prev, { key: `row-${Date.now()}`, student_id: student.id, student_name: student.name, label: '', outstanding: 0, include: true, amount: '' }]);
   const removeLine = (key) => setLines(prev => prev.filter(l => l.key !== key));
 
   const remainingAfter = Math.max(0, totalPending - totalAllocated);
@@ -184,39 +211,77 @@ export default function NewReceipt() {
 
   const submit = async (thenPrint = true) => {
     if (!student) return toast.error('Select a student first');
-    // Build payload
-    let payloadLines = [];
-    let receipt_type = tab === 'misc' ? 'misc' : 'school';
     if (tab === 'installment') {
-      payloadLines = installments.filter(i => i.include).map(i => ({
-        fee_head_id: null, fee_head_name: i.name, installment: i.name, amount: Number(i.amount || 0),
-      }));
-    } else {
-      payloadLines = lines.filter(l => l.include && Number(l.amount) > 0).map(l => ({
-        fee_head_id: null, fee_head_name: l.label || 'Fee', amount: Number(l.amount),
-      }));
+      const payloadLines = installments.filter(i => i.include).map(i => ({ fee_head_id: null, fee_head_name: i.name, installment: i.name, amount: Number(i.amount || 0) }));
+      if (!payloadLines.length) return toast.error('Select at least one instalment');
+      setBusy(true);
+      try {
+        const { data } = await api.post('/receipts', {
+          receipt_type: 'school', department_id: student.department_id, student_id: student.id,
+          payer_name: student.name, payment_mode: mode, payment_reference: ref || null, lines: payloadLines, remarks: remarks || null,
+          metadata: { class_name: student.class_name, guardian_name: student.guardian_name, guardian_mobile: student.guardian_mobile },
+        });
+        toast.success(`Receipt ${data.number} created`);
+        if (thenPrint) nav(`/receipts/${data.id}`); else nav('/receipts');
+      } catch (e) { toast.error(e?.response?.data?.detail || 'Failed'); }
+      finally { setBusy(false); }
+      return;
     }
-    if (!payloadLines.length) return toast.error('Nothing to charge — allocate at least one head');
-    if (tab === 'misc' && payloadLines.some(l => !l.fee_head_name.trim())) return toast.error('Give a label for each line');
+
+    // Group lines by student_id
+    const byStudent = {};
+    for (const l of lines) {
+      if (!l.include || Number(l.amount) <= 0) continue;
+      const sid = l.student_id || student.id;
+      byStudent[sid] = byStudent[sid] || { student_id: sid, student_name: l.student_name, lines: [] };
+      byStudent[sid].lines.push({ fee_head_id: null, fee_head_name: (l.label || 'Fee').trim(), amount: Number(l.amount) });
+    }
+    const groups = Object.values(byStudent);
+    if (!groups.length) return toast.error('Nothing to charge — allocate at least one head');
+    if (tab === 'misc' && groups.some(g => g.lines.some(l => !l.fee_head_name))) return toast.error('Give a label for each line');
+
+    // Look up dept_id for each student (for siblings we already have via siblings state)
+    const sidToDept = { [student.id]: student.department_id };
+    for (const s of siblings) sidToDept[s.student.id] = s.student.department_id;
+
     setBusy(true);
+    const receiptType = tab === 'misc' ? 'misc' : 'school';
+    const createdReceipts = [];
     try {
-      const { data } = await api.post('/receipts', {
-        receipt_type, department_id: student.department_id, student_id: student.id,
-        payer_name: student.name, payment_mode: mode, payment_reference: ref || null,
-        lines: payloadLines, remarks: remarks || null,
-        metadata: { class_name: student.class_name, guardian_name: student.guardian_name, guardian_mobile: student.guardian_mobile },
-      });
-      toast.success(`Receipt ${data.number} created`);
-      if (thenPrint) nav(`/receipts/${data.id}`);
-      else { toast.message('Draft saved as issued receipt · view in Receipts'); nav('/receipts'); }
-    } catch (e) {
-      const d = e?.response?.data?.detail; toast.error(typeof d === 'string' ? d : 'Failed to create receipt');
-    } finally { setBusy(false); }
+      for (const g of groups) {
+        const dept_id = sidToDept[g.student_id];
+        const { data } = await api.post('/receipts', {
+          receipt_type: receiptType, department_id: dept_id, student_id: g.student_id,
+          payer_name: g.student_name, payment_mode: mode, payment_reference: ref || null,
+          lines: g.lines, remarks: remarks || null,
+          metadata: { class_name: student.class_name, guardian_name: student.guardian_name, guardian_mobile: student.guardian_mobile, sibling_group_size: groups.length > 1 ? groups.length : undefined },
+        });
+        createdReceipts.push(data);
+      }
+      if (createdReceipts.length === 1) {
+        toast.success(`Receipt ${createdReceipts[0].number} created`);
+        if (thenPrint) nav(`/receipts/${createdReceipts[0].id}`); else nav('/receipts');
+      } else {
+        toast.success(`${createdReceipts.length} receipts created (one per student)`);
+        if (thenPrint) nav(`/receipts/${createdReceipts[0].id}`); else nav('/receipts');
+      }
+    } catch (e) { toast.error(e?.response?.data?.detail || 'Failed to create receipt'); }
+    finally { setBusy(false); }
   };
+
+  const siblingGroups = useMemo(() => {
+    if (!includeSiblings) return null;
+    const groups = {};
+    for (const l of lines) {
+      const key = l.student_id;
+      groups[key] = groups[key] || { student_id: key, name: l.student_name, allocated: 0 };
+      if (l.include) groups[key].allocated += Number(l.amount || 0);
+    }
+    return Object.values(groups).filter(g => g.allocated > 0);
+  }, [lines, includeSiblings]);
 
   return (
     <div className="min-h-full flex flex-col">
-      {/* Navy Header */}
       <div className="bg-slate-900 text-white px-6 py-3 flex items-center justify-between no-print">
         <div className="flex items-center gap-3">
           <img src="https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg" alt="logo" className="w-9 h-9 rounded-full object-cover ring-1 ring-slate-700" />
@@ -237,7 +302,6 @@ export default function NewReceipt() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="bg-white border-b border-slate-200 px-6 pt-3 no-print">
         <div className="flex items-end gap-2">
           <div className="text-[11px] uppercase tracking-widest text-slate-500 mr-3 mb-2">Receipt Type</div>
@@ -251,7 +315,6 @@ export default function NewReceipt() {
         </div>
       </div>
 
-      {/* Student search / card */}
       <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 no-print">
         {!student ? (
           <div className="max-w-3xl">
@@ -278,28 +341,41 @@ export default function NewReceipt() {
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-heading font-bold text-lg">
-                {(student.name || '').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
-              </div>
-              <div>
-                <div className="font-heading text-lg font-semibold text-slate-900 leading-tight" data-testid="nr-student-name">{student.name}</div>
-                <div className="flex items-center gap-4 text-[12px] text-slate-600 mt-1">
-                  <span className="inline-flex items-center gap-1"><IdCard className="w-3.5 h-3.5" /> <span className="font-mono">{student.admission_no}</span></span>
-                  <span className="inline-flex items-center gap-1"><GraduationCap className="w-3.5 h-3.5" /> {student.class_name || ledger?.student?.class_name || '—'}</span>
-                  <span className="inline-flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> <span className="font-mono">{student.guardian_mobile ? student.guardian_mobile.replace(/^(\d{2})(\d+)(\d{2})$/, '$1******$3') : '—'}</span></span>
+          <div>
+            <div className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-heading font-bold text-lg">
+                  {(student.name || '').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
+                </div>
+                <div>
+                  <div className="font-heading text-lg font-semibold text-slate-900 leading-tight" data-testid="nr-student-name">{student.name}</div>
+                  <div className="flex items-center gap-4 text-[12px] text-slate-600 mt-1">
+                    <span className="inline-flex items-center gap-1"><IdCard className="w-3.5 h-3.5" /> <span className="font-mono">{student.admission_no}</span></span>
+                    <span className="inline-flex items-center gap-1"><GraduationCap className="w-3.5 h-3.5" /> {student.class_name || ledger?.student?.class_name || '—'}</span>
+                    <span className="inline-flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> <span className="font-mono">{student.guardian_mobile ? student.guardian_mobile.replace(/^(\d{2})(\d+)(\d{2})$/, '$1******$3') : '—'}</span></span>
+                  </div>
                 </div>
               </div>
+              <button data-testid="nr-change-student" onClick={() => { setStudent(null); setLedger(null); setLines([]); setSiblings([]); setIncludeSiblings(false); setAmountPaying(''); }} className="text-xs text-blue-700 hover:underline">Change student</button>
             </div>
-            <button data-testid="nr-change-student" onClick={() => { setStudent(null); setLedger(null); setLines([]); setAmountPaying(''); }} className="text-xs text-blue-700 hover:underline">Change student</button>
+            {siblings.length > 0 && (
+              <div className="mt-2 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-[13px]">
+                <Users className="w-4 h-4 text-amber-700" />
+                <div className="flex-1">
+                  <span className="font-medium text-amber-900">{siblings.length} sibling{siblings.length>1?'s':''} on same guardian mobile</span>
+                  <span className="text-amber-800 ml-2">— {siblings.map(s=>s.student.name).join(', ')}</span>
+                </div>
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" data-testid="nr-include-siblings" checked={includeSiblings} onChange={e=>setIncludeSiblings(e.target.checked)} className="w-4 h-4" />
+                  <span className="text-[12px] font-medium text-amber-900">Include siblings in one payment</span>
+                </label>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Main body */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-6 bg-slate-100">
-        {/* LEFT: Payment Details */}
         <div className="lg:col-span-8 bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-heading font-semibold text-lg">Payment Details</h3>
@@ -310,10 +386,9 @@ export default function NewReceipt() {
             )}
           </div>
 
-          {/* Totals + Amount Paying */}
           <div className="grid grid-cols-3 gap-3 mb-4">
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-              <div className="text-[10px] uppercase tracking-widest text-slate-500">Total Outstanding</div>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500">Total Outstanding{includeSiblings ? ' (Family)' : ''}</div>
               <div className="font-heading text-2xl font-bold tabular text-slate-900 mt-0.5" data-testid="nr-total-pending">{inr(totalPending)}</div>
             </div>
             <div className="bg-emerald-50 border-2 border-emerald-200 rounded-lg p-3">
@@ -331,31 +406,25 @@ export default function NewReceipt() {
               <div className="md:col-span-2">
                 <label className="text-[10px] uppercase tracking-widest text-blue-800 flex items-center gap-1.5 mb-1"><Wallet className="w-3.5 h-3.5" /> Amount Paying (auto-distributes ↓)</label>
                 <input data-testid="nr-amount-paying" type="number" min="0" step="1" value={amountPaying}
-                  onChange={e=>onAmountPayingChange(e.target.value)}
-                  placeholder="e.g. 5000"
+                  onChange={e=>onAmountPayingChange(e.target.value)} placeholder="e.g. 5000"
                   className="w-full h-11 px-3 border-2 border-blue-300 rounded-lg font-mono text-lg font-semibold text-blue-900 bg-white focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none" />
                 <div className="text-[11px] text-blue-800 mt-1 flex items-center gap-1"><ArrowUpDown className="w-3 h-3" /> Order: {PRIORITY.map(p=>p[0].toUpperCase()+p.slice(1)).join(' → ')} → others</div>
               </div>
               <div className="flex flex-col justify-end gap-2">
-                <button data-testid="nr-pay-full" onClick={payFullOutstanding} className="h-10 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5"><Sparkles className="w-4 h-4" /> Pay Full Outstanding</button>
-                <button onClick={()=>{ setAmountPaying(''); distribute(0); }} className="h-8 px-3 border border-slate-300 rounded text-[12px] hover:bg-white">Clear allocation</button>
+                <button data-testid="nr-next-quarter" onClick={suggestNextQuarter} className="h-9 px-3 border-2 border-blue-300 text-blue-800 hover:bg-blue-100 rounded-lg text-[12px] font-semibold flex items-center justify-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Next Quarter</button>
+                <button data-testid="nr-pay-full" onClick={payFullOutstanding} className="h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[12px] font-semibold flex items-center justify-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Full Outstanding</button>
+                <button onClick={()=>{ setAmountPaying(''); distribute(0); }} className="h-7 px-3 border border-slate-300 rounded text-[11px] hover:bg-white">Clear</button>
               </div>
             </div>
           )}
 
-          {/* Line items */}
           {!student ? (
-            <div className="border-2 border-dashed border-slate-200 rounded-lg p-10 text-center text-sm text-slate-500">
-              Select a student to see their pending fee heads
-            </div>
+            <div className="border-2 border-dashed border-slate-200 rounded-lg p-10 text-center text-sm text-slate-500">Select a student to see their pending fee heads</div>
           ) : tab === 'installment' ? (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-wide text-slate-600 border-b border-slate-200">
-                  <th className="w-12 py-2">Pay</th>
-                  <th>Installment</th>
-                  <th>Due Date</th>
-                  <th className="text-right">Amount (₹)</th>
+                  <th className="w-12 py-2">Pay</th><th>Installment</th><th>Due Date</th><th className="text-right">Amount (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -376,13 +445,14 @@ export default function NewReceipt() {
                 <tr className="text-left text-[11px] uppercase tracking-wide text-slate-600 border-b border-slate-200">
                   <th className="w-12 py-2">Include</th>
                   <th>Fee Component</th>
+                  {includeSiblings && <th>Student</th>}
                   {tab === 'school' && <th className="text-right">Outstanding (₹)</th>}
                   <th className="text-right">Amount (₹)</th>
                   {tab === 'misc' && <th className="w-10"></th>}
                 </tr>
               </thead>
               <tbody>
-                {lines.length === 0 && tab === 'school' && <tr><td colSpan="4" className="py-6 text-center text-slate-500 text-[13px]">No pending fee heads found. This student may be fully paid, or has no fee structure assigned.</td></tr>}
+                {lines.length === 0 && tab === 'school' && <tr><td colSpan={includeSiblings ? 5 : 4} className="py-6 text-center text-slate-500 text-[13px]">No pending fee heads found. This student may be fully paid, or has no fee structure assigned.</td></tr>}
                 {lines.map((l, i) => (
                   <tr key={l.key} className="border-b border-slate-100">
                     <td className="py-2"><input type="checkbox" data-testid={`nr-fh-inc-${i}`} checked={!!l.include} onChange={()=>toggleInclude(l.key)} /></td>
@@ -393,6 +463,7 @@ export default function NewReceipt() {
                         <span className="font-medium text-slate-800">{l.label}</span>
                       )}
                     </td>
+                    {includeSiblings && <td className="py-2"><span className={`text-[11px] px-2 py-0.5 rounded-full ${l.student_id===student.id ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'}`}>{l.student_name}</span></td>}
                     {tab === 'school' && <td className="py-2 text-right font-mono text-slate-600">{Number(l.outstanding).toFixed(2)}</td>}
                     <td className="py-2 text-right">
                       <input data-testid={`nr-fh-amt-${i}`} type="number" min="0" step="1" value={l.amount === 0 && !l.include ? '' : l.amount} onChange={e=>setLineAmount(l.key, e.target.value)}
@@ -402,10 +473,10 @@ export default function NewReceipt() {
                   </tr>
                 ))}
                 {tab === 'misc' && (
-                  <tr><td colSpan="4" className="py-2"><button onClick={addCustomLine} className="text-xs text-blue-700 hover:underline">+ Add another line</button></td></tr>
+                  <tr><td colSpan={includeSiblings ? 5 : 4} className="py-2"><button onClick={addCustomLine} className="text-xs text-blue-700 hover:underline">+ Add another line</button></td></tr>
                 )}
                 <tr className="bg-slate-50 font-semibold">
-                  <td colSpan={tab === 'school' ? 3 : 2} className="py-2 text-right">Total Allocated</td>
+                  <td colSpan={(tab === 'school' ? 3 : 2) + (includeSiblings ? 1 : 0)} className="py-2 text-right">Total Allocated</td>
                   <td className="py-2 text-right font-mono text-lg text-emerald-700" data-testid="nr-total-alloc-row">{inr(totalAllocated)}</td>
                   {tab === 'misc' && <td></td>}
                 </tr>
@@ -414,7 +485,6 @@ export default function NewReceipt() {
           )}
         </div>
 
-        {/* RIGHT: Payment Mode */}
         <div className="lg:col-span-4 bg-white border border-slate-200 rounded-lg p-5 shadow-sm h-fit">
           <h3 className="font-heading font-semibold text-lg mb-3">Payment Mode</h3>
           <div className="grid grid-cols-3 gap-2 mb-4">
@@ -438,6 +508,13 @@ export default function NewReceipt() {
             <input data-testid="nr-amount-received" readOnly value={totalAllocated.toFixed(2)} className="w-full h-11 px-3 border border-slate-300 rounded font-mono text-lg font-semibold bg-slate-50" />
           </label>
 
+          {siblingGroups && siblingGroups.length > 1 && (
+            <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded text-[11px]">
+              <div className="font-semibold text-amber-900 mb-1 flex items-center gap-1"><Users className="w-3 h-3" /> Family split — {siblingGroups.length} receipts will be issued</div>
+              {siblingGroups.map(g => <div key={g.student_id} className="flex justify-between text-amber-800"><span>{g.name}</span><span className="font-mono">{inr(g.allocated)}</span></div>)}
+            </div>
+          )}
+
           <label className="block mb-4">
             <div className="text-[11px] uppercase tracking-widest text-slate-600 mb-1">Remarks</div>
             <input value={remarks} onChange={e=>setRemarks(e.target.value)} className="w-full h-9 px-3 border border-slate-300 rounded text-sm bg-white focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none" />
@@ -445,7 +522,7 @@ export default function NewReceipt() {
 
           <button data-testid="nr-submit" disabled={!canSubmit} onClick={()=>submit(true)}
             className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm">
-            <Printer className="w-5 h-5" /> Create & Print Receipt · {inr(totalAllocated)}
+            <Printer className="w-5 h-5" /> Create {siblingGroups && siblingGroups.length > 1 ? `${siblingGroups.length} Receipts` : '& Print Receipt'} · {inr(totalAllocated)}
           </button>
           <button data-testid="nr-save-draft" disabled={!canSubmit} onClick={()=>submit(false)}
             className="mt-2 w-full h-10 border border-slate-300 hover:bg-slate-50 disabled:opacity-60 rounded-lg text-sm text-slate-700 flex items-center justify-center gap-1.5">
@@ -459,7 +536,6 @@ export default function NewReceipt() {
         </div>
       </div>
 
-      {/* Bottom Status Strip */}
       <div className="bg-blue-50 border-t border-blue-200 px-6 py-2 text-[12px] text-blue-900 flex items-center justify-between no-print">
         <span className="inline-flex items-center gap-1.5"><Info className="w-3.5 h-3.5" /> Receipt number will be generated centrally when you click <b>Create &amp; Print</b>.</span>
         {student && <span>Cashier: <b>{user?.name}</b> · Mode: <b className="capitalize">{mode}</b> · Allocated: <b>{inr(totalAllocated)}</b></span>}

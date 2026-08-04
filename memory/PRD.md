@@ -102,7 +102,12 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Preserved the original comprehensive form (all 9 receipt types including Bus/Voucher/Refund) at `/new-receipt-advanced` via new `NewReceiptAdvanced.js`, reachable via the header link.
 - **ImportExcel.js**: uses a client-generated `batch_id` per file so undo is atomic; supports undo for **both** students and fee structures (uses the new `/bulk-delete` endpoints).
 
-### Backlog (updated priorities)
+### 2026-02-04 (continued) — Follow-ups shipped
+- **A4 Print Parity**: FeeReceipt now opens with a navy brand band that mirrors the cashier UI header ("Balaji Convent · School Receipt Manager / OFFICIAL FEE RECEIPT" + receipt no + date on the right).
+- **Import History** page (`/imports-history`) — lists every batch with When / Kind / Imported By / Created / Updated-Skipped / Errors / Status / one-click Undo per row. Undone batches show a red pill and who undid them.
+- **Amount Suggestions**: On student load, `Amount Paying` pre-fills with the top-priority pending head's outstanding, and a "Next Quarter" chip refills it any time.
+- **Sibling Split**: When the loaded student has siblings on the same guardian mobile, an amber banner appears ("N sibling(s) on same guardian mobile — <Names>") with an "Include siblings in one payment" toggle. When on, all siblings' pending heads merge into one priority-sorted list, and each row is tagged with the student name. Submit creates **one receipt per student** in a single flow, with a family split preview in the right rail.
+- New backend endpoints: `GET /api/students/{id}/siblings`, `GET /api/imports/history`. Both used exclusively by the new UI.
 - **P1** — Print A4 receipt to inherit the navy header/branding of the new cashier UI (currently uses the existing A4 layout — good, but could tighten header parity)
 - **P1** — "Import History" page listing past batches with counts, user, timestamp, and per-row undo button
 - **P2** — Persist an "Amount Paying" preset value from the last unpaid quarter for one-click collect
