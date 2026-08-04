@@ -76,3 +76,34 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Frontend: `yarn build` produces static bundle; serve via nginx on Main Server PC. Set `REACT_APP_BACKEND_URL` to LAN IP (e.g., `http://192.168.1.10:8001`) before build.
 - CORS: switch `CORS_ORIGINS` in `.env` to the LAN hostname/IP.
 - Backups: schedule `mongodump` daily to a separate drive.
+
+
+## 2026-02-04 (Fork resume) — Fixes & New Cashier UI
+### Backend
+- **Fixed** critical syntax error at server.py:1476 (stray `aid - adjusted + refunded)` + a duplicated defaulters/on_shutdown block appended to the file) that was crashing uvicorn on boot.
+- **Added** `POST /api/fee-structures/bulk-import` — groups rows by (dept_code, class_name, academic_year), upserts fee structures, stamps `import_batch_id`, records batch in `import_batches`.
+- **Added** `POST /api/fee-structures/bulk-delete` — undo by batch_id, skips structures already referenced by any student.
+- **Modified** `POST /api/students/bulk-import` — now stamps `import_batch_id` on each row and records the batch summary; accepts optional `batch_id` in body.
+- **Added** `POST /api/students/bulk-delete` — undo by batch_id OR by ids, safely protects students that already have receipts.
+- **Added** `GET /api/imports/latest?kind=students|fee_structures` — returns the most recent non-undone batch for the requested kind.
+
+### Frontend
+- **Rebuilt `/new-receipt` page** to match the uploaded receipt-manager mock:
+  - Navy header with logo, cashier profile, and "Advanced Types" link
+  - Receipt-type tabs (Regular Fee / Installment / Other Charges) with sub-labels
+  - Debounced student search bar + selected-student card (initials avatar, admission no, class, masked mobile)
+  - Live outstanding / parent-will-pay / balance-after summary trio
+  - **Amount Paying field** with auto-distribution across pending heads in priority order (Tuition → Transport → Bus → Computer → Activity → Library → others). Cashier can still toggle heads and edit per-line amounts.
+  - "Pay Full Outstanding" and "Clear allocation" shortcuts
+  - Payment mode selector: **Cash / UPI / Card** only (Bank Transfer removed per user)
+  - Amount Received field auto-reflects allocated total
+  - Big green "Create & Print Receipt" + secondary "Save & Continue Later"
+  - Bottom status strip: "Receipt number will be generated centrally"
+- Preserved the original comprehensive form (all 9 receipt types including Bus/Voucher/Refund) at `/new-receipt-advanced` via new `NewReceiptAdvanced.js`, reachable via the header link.
+- **ImportExcel.js**: uses a client-generated `batch_id` per file so undo is atomic; supports undo for **both** students and fee structures (uses the new `/bulk-delete` endpoints).
+
+### Backlog (updated priorities)
+- **P1** — Print A4 receipt to inherit the navy header/branding of the new cashier UI (currently uses the existing A4 layout — good, but could tighten header parity)
+- **P1** — "Import History" page listing past batches with counts, user, timestamp, and per-row undo button
+- **P2** — Persist an "Amount Paying" preset value from the last unpaid quarter for one-click collect
+- **P2** — Attach fee-structure preview (first 3 rows) inside the mapping panel before import

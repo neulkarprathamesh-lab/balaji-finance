@@ -46,9 +46,10 @@ export default function ImportExcel() {
   const [needsMapping, setNeedsMapping] = useState(false);
   const [progress, setProgress] = useState({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false });
   const [importedIds, setImportedIds] = useState([]);
+  const [batchId, setBatchId] = useState(null);
   const [filename, setFilename] = useState('');
 
-  const reset = () => { setRows([]); setHeaders([]); setMapping({}); setNeedsMapping(false); setImportedIds([]); setFilename(''); setProgress({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false }); if (fileRef.current) fileRef.current.value = ''; };
+  const reset = () => { setRows([]); setHeaders([]); setMapping({}); setNeedsMapping(false); setImportedIds([]); setBatchId(null); setFilename(''); setProgress({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false }); if (fileRef.current) fileRef.current.value = ''; };
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([[...spec.required, ...spec.optional], ...spec.sample]);
@@ -110,15 +111,17 @@ export default function ImportExcel() {
     if (!rows.length) return;
     setProgress(p => ({ ...p, running: true, finished: false }));
     let added = 0, skipped = 0; const errs = []; const idsThisRun = [];
+    // Generate one batch_id for the whole file so undo is atomic
+    const bid = `imp-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    setBatchId(bid);
     for (let i = 0; i < rows.length; i += BATCH) {
       const batch = rows.slice(i, i + BATCH);
       const current = batch[0]?.name || batch[0]?.class_name || batch[0]?.admission_no || '—';
       setProgress(p => ({ ...p, current: `${current} (row ${i+1})`, done: i }));
       try {
-        const { data } = await api.post(spec.endpoint, { rows: batch });
+        const { data } = await api.post(spec.endpoint, { rows: batch, batch_id: bid });
         added += data.created; skipped += data.skipped;
         for (const e of (data.errors || [])) errs.push({ ...e, row: i + e.row });
-        // Track imported keys for undo (students only)
         if (spec.idKeyForUndo) for (const b of batch) if (b[spec.idKeyForUndo]) idsThisRun.push(b[spec.idKeyForUndo]);
       } catch (ex) {
         for (let j = 0; j < batch.length; j++) errs.push({ row: i + j + 1, error: ex?.response?.data?.detail || 'Batch failed', data: batch[j] });
@@ -126,26 +129,21 @@ export default function ImportExcel() {
       setProgress(p => ({ ...p, added, skipped, errors: errs, done: Math.min(i + BATCH, rows.length) }));
       await new Promise(r => setTimeout(r, 60));
     }
-    // Resolve admission_nos → student ids for undo
-    if (spec.idKeyForUndo && idsThisRun.length) {
-      const stuIds = [];
-      for (const adm of idsThisRun) {
-        try { const { data } = await api.get(`/students?q=${adm}&limit=1`); if (data[0]?.admission_no === adm) stuIds.push(data[0].id); }
-        catch {}
-      }
-      setImportedIds(stuIds);
-    }
+    if (spec.idKeyForUndo) setImportedIds(idsThisRun); // just for count display
     setProgress(p => ({ ...p, running: false, finished: true, current: null, done: rows.length }));
     toast.success(`✓ Import complete — ${added} added, ${skipped} ${kind==='fees'?'updated':'skipped'}, ${errs.length} errors`);
   };
 
   const undoImport = async () => {
-    if (!importedIds.length) return;
-    if (!window.confirm(`Roll back the last ${importedIds.length} imported students? Students with receipts will be kept.`)) return;
+    if (!batchId) return;
+    const label = kind === 'fees' ? 'fee-structure batch' : `${importedIds.length} imported students`;
+    if (!window.confirm(`Roll back the last ${label}? Records already referenced (with receipts / assigned students) will be kept safely.`)) return;
     try {
-      const { data } = await api.post('/students/bulk-delete', { student_ids: importedIds });
-      toast.success(`✓ Deleted ${data.deleted} students · ${data.protected_with_receipts} kept (had receipts)`);
-      setImportedIds([]);
+      const endpoint = kind === 'fees' ? '/fee-structures/bulk-delete' : '/students/bulk-delete';
+      const { data } = await api.post(endpoint, { batch_id: batchId });
+      const kept = kind === 'fees' ? data.protected_referenced : data.protected_with_receipts;
+      toast.success(`✓ Undo done — ${data.deleted} deleted · ${kept || 0} kept (in use)`);
+      setImportedIds([]); setBatchId(null);
     } catch (e) { toast.error(e?.response?.data?.detail || 'Undo failed'); }
   };
 
@@ -207,9 +205,9 @@ export default function ImportExcel() {
             </button>
           ) : (
             <div className="mt-4 space-y-2">
-              {importedIds.length > 0 && (
+              {batchId && (
                 <button data-testid="undo-import" onClick={undoImport} className="h-10 px-4 border-2 border-red-300 text-red-700 hover:bg-red-50 rounded text-sm w-full flex items-center justify-center gap-2">
-                  <Undo2 className="w-4 h-4" /> Undo Last Import ({importedIds.length} students)
+                  <Undo2 className="w-4 h-4" /> Undo Last Import{kind==='fees' ? '' : ` (${importedIds.length} students)`}
                 </button>
               )}
               <button data-testid="import-reset" onClick={reset} className="h-10 px-4 border border-slate-300 rounded text-sm w-full flex items-center justify-center gap-2 hover:bg-slate-50">

@@ -507,10 +507,11 @@ async def create_student(body: StudentIn, user = Depends(require_roles("administ
 
 @api.post("/students/bulk-import")
 async def bulk_import_students(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
-    """Body: {rows: [ {admission_no, name, department_code, class_name, guardian_name, guardian_mobile, ...} ]}"""
+    """Body: {rows: [ {admission_no, name, department_code, class_name, guardian_name, guardian_mobile, ...} ], batch_id?: str}"""
     rows = body.get("rows", [])
     if not isinstance(rows, list) or not rows:
         raise HTTPException(400, "rows must be a non-empty array")
+    batch_id = body.get("batch_id") or gen_id()
     depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(100)}
     classes = await db.classes.find({}, {"_id":0}).to_list(500)
     created, skipped, errors = 0, 0, []
@@ -535,14 +536,135 @@ async def bulk_import_students(body: Dict[str, Any], user = Depends(require_role
                 "department_id": d["id"], "class_id": cls["id"],
                 "guardian_name": r.get("guardian_name"), "guardian_mobile": str(r.get("guardian_mobile","") or ""),
                 "address": r.get("address"), "status":"active", "created_at": now_iso(),
-                "imported_at": now_iso(), "imported_by": user["id"],
+                "imported_at": now_iso(), "imported_by": user["id"], "import_batch_id": batch_id,
             })
             created += 1
-            errors  # noop to keep linter happy
         except Exception as e:
             errors.append({"row": idx+1, "error": str(e)})
-    await audit(user, "bulk_import", "student", "", {"created": created, "skipped": skipped, "errors": len(errors)})
-    return {"created": created, "skipped": skipped, "errors": errors, "total": len(rows)}
+    await db.import_batches.insert_one({
+        "id": batch_id, "type": "students", "created": created, "skipped": skipped,
+        "errors_count": len(errors), "total": len(rows),
+        "user_id": user["id"], "user_name": user["name"], "created_at": now_iso(),
+    })
+    await audit(user, "bulk_import", "student", batch_id, {"created": created, "skipped": skipped, "errors": len(errors)})
+    return {"created": created, "skipped": skipped, "errors": errors, "total": len(rows), "batch_id": batch_id}
+
+@api.post("/students/bulk-delete")
+async def bulk_delete_students(body: Dict[str, Any], user = Depends(require_roles("administrator","manager"))):
+    """Undo Last Import: delete students by ids OR by batch_id. Skips any student who has receipts."""
+    batch_id = body.get("batch_id")
+    ids = body.get("student_ids") or []
+    q: Dict[str, Any] = {}
+    if batch_id:
+        q["import_batch_id"] = batch_id
+    elif ids:
+        q["id"] = {"$in": ids}
+    else:
+        raise HTTPException(400, "Provide batch_id or student_ids")
+    stus = await db.students.find(q, {"_id": 0}).to_list(5000)
+    if not stus:
+        return {"deleted": 0, "protected_with_receipts": 0}
+    # Filter out students with receipts
+    with_receipts = await db.receipts.distinct("student_id", {"student_id": {"$in": [s["id"] for s in stus]}})
+    protected_ids = set(with_receipts)
+    deletable = [s["id"] for s in stus if s["id"] not in protected_ids]
+    result = await db.students.delete_many({"id": {"$in": deletable}}) if deletable else None
+    if batch_id:
+        await db.import_batches.update_one({"id": batch_id}, {"$set": {"undone_at": now_iso(), "undone_by": user["name"], "undone_deleted": len(deletable), "undone_protected": len(protected_ids)}})
+    await audit(user, "bulk_delete", "student", batch_id or "", {"deleted": len(deletable), "protected": len(protected_ids)})
+    return {"deleted": len(deletable), "protected_with_receipts": len(protected_ids), "batch_id": batch_id}
+
+@api.post("/fee-structures/bulk-import")
+async def bulk_import_fee_structures(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
+    """Body: {rows: [{department_code, class_name, academic_year, fee_head_name, amount}], batch_id?}
+    Rows for the same (dept, class, year) are grouped into a single fee_structure. Existing structures are updated (heads merged)."""
+    rows = body.get("rows", [])
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(400, "rows must be a non-empty array")
+    batch_id = body.get("batch_id") or gen_id()
+    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(100)}
+    classes = await db.classes.find({}, {"_id":0}).to_list(500)
+    # Group rows by (dept_code, class_name, academic_year)
+    groups: Dict[tuple, List[dict]] = {}
+    errors: List[dict] = []
+    for idx, r in enumerate(rows):
+        try:
+            dcode = str(r.get("department_code","")).strip().upper()
+            cname = str(r.get("class_name","")).strip()
+            ay = str(r.get("academic_year","")).strip() or "2026-27"
+            head = str(r.get("fee_head_name","")).strip()
+            amt = float(r.get("amount") or 0)
+            if not dcode or not cname or not head:
+                errors.append({"row": idx+1, "error": "department_code, class_name, fee_head_name required", "data": r}); continue
+            if amt <= 0:
+                errors.append({"row": idx+1, "error": "amount must be > 0", "data": r}); continue
+            if dcode not in depts:
+                errors.append({"row": idx+1, "error": f"unknown department code {dcode}", "data": r}); continue
+            d = depts[dcode]
+            cls = next((c for c in classes if c["department_id"]==d["id"] and c["name"].lower()==cname.lower()), None)
+            if not cls:
+                errors.append({"row": idx+1, "error": f"unknown class '{cname}' in {dcode}", "data": r}); continue
+            groups.setdefault((d["id"], cls["id"], ay), []).append({"fee_head_name": head, "amount": amt})
+        except Exception as e:
+            errors.append({"row": idx+1, "error": str(e), "data": r})
+    created, updated, created_ids = 0, 0, []
+    for (dept_id, class_id, ay), items in groups.items():
+        existing = await db.fee_structures.find_one({"department_id": dept_id, "class_id": class_id, "academic_year": ay})
+        total = sum(it["amount"] for it in items)
+        if existing:
+            # Merge: append heads that don't exist by name, replace amount for those that do
+            existing_items = existing.get("items", [])
+            by_name = {it.get("fee_head_name","").strip().lower(): idx for idx, it in enumerate(existing_items)}
+            for it in items:
+                key = it["fee_head_name"].strip().lower()
+                if key in by_name:
+                    existing_items[by_name[key]]["amount"] = it["amount"]
+                else:
+                    existing_items.append({"fee_head_id": None, "fee_head_name": it["fee_head_name"], "amount": it["amount"]})
+            new_total = sum(float(x.get("amount",0)) for x in existing_items)
+            await db.fee_structures.update_one({"id": existing["id"]}, {"$set": {"items": existing_items, "total": new_total, "last_import_batch_id": batch_id, "last_import_at": now_iso()}})
+            updated += 1
+        else:
+            fid = gen_id()
+            doc = {
+                "id": fid, "department_id": dept_id, "class_id": class_id, "academic_year": ay,
+                "items": [{"fee_head_id": None, **it} for it in items],
+                "total": total, "import_batch_id": batch_id,
+                "created_at": now_iso(), "created_by": user["name"],
+            }
+            await db.fee_structures.insert_one(doc)
+            created_ids.append(fid); created += 1
+    await db.import_batches.insert_one({
+        "id": batch_id, "type": "fee_structures", "created": created, "updated": updated,
+        "errors_count": len(errors), "total_rows": len(rows), "created_ids": created_ids,
+        "user_id": user["id"], "user_name": user["name"], "created_at": now_iso(),
+    })
+    await audit(user, "bulk_import", "fee_structure", batch_id, {"created": created, "updated": updated, "errors": len(errors)})
+    return {"created": created, "skipped": updated, "errors": errors, "total": len(rows), "batch_id": batch_id, "created_ids": created_ids}
+
+@api.post("/fee-structures/bulk-delete")
+async def bulk_delete_fee_structures(body: Dict[str, Any], user = Depends(require_roles("administrator","manager"))):
+    """Undo Last Fee-Structure Import: delete structures created by a batch, skipping any referenced by active students."""
+    batch_id = body.get("batch_id")
+    if not batch_id:
+        raise HTTPException(400, "batch_id required")
+    structs = await db.fee_structures.find({"import_batch_id": batch_id}, {"_id":0}).to_list(1000)
+    if not structs:
+        return {"deleted": 0, "protected_referenced": 0}
+    used = await db.students.distinct("fee_structure_id", {"fee_structure_id": {"$in": [s["id"] for s in structs]}})
+    protected_ids = set([u for u in used if u])
+    deletable = [s["id"] for s in structs if s["id"] not in protected_ids]
+    if deletable:
+        await db.fee_structures.delete_many({"id": {"$in": deletable}})
+    await db.import_batches.update_one({"id": batch_id}, {"$set": {"undone_at": now_iso(), "undone_by": user["name"], "undone_deleted": len(deletable), "undone_protected": len(protected_ids)}})
+    await audit(user, "bulk_delete", "fee_structure", batch_id, {"deleted": len(deletable), "protected": len(protected_ids)})
+    return {"deleted": len(deletable), "protected_referenced": len(protected_ids)}
+
+@api.get("/imports/latest")
+async def latest_import_batch(kind: Literal["students","fee_structures"], user = Depends(get_current_user)):
+    """Return the most recent import batch of the requested kind that hasn't been undone."""
+    doc = await db.import_batches.find_one({"type": kind, "undone_at": {"$exists": False}}, {"_id":0}, sort=[("created_at", -1)])
+    return doc or {}
 
 @api.post("/students/bulk-reassign")
 async def bulk_reassign_students(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):

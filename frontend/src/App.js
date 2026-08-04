@@ -8,6 +8,7 @@ import Dashboard from '@/pages/Dashboard';
 import Students from '@/pages/Students';
 import StudentDetail from '@/pages/StudentDetail';
 import NewReceipt from '@/pages/NewReceipt';
+import NewReceiptAdvanced from '@/pages/NewReceiptAdvanced';
 import Receipts from '@/pages/Receipts';
 import ReceiptView from '@/pages/ReceiptView';
 import Adjustments from '@/pages/Adjustments';
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="students" element={<Students />} />
             <Route path="students/:id" element={<StudentDetail />} />
             <Route path="new-receipt" element={<NewReceipt />} />
+            <Route path="new-receipt-advanced" element={<NewReceiptAdvanced />} />
             <Route path="receipts" element={<Receipts />} />
             <Route path="adjustments" element={<Adjustments />} />
             <Route path="extensions" element={<Extensions />} />
