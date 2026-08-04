@@ -28,6 +28,7 @@ import FeeBrochure from '@/pages/FeeBrochure';
 import Defaulters from '@/pages/Defaulters';
 import Lookup from '@/pages/Lookup';
 import KioskPoster from '@/pages/KioskPoster';
+import StudentLookup from '@/pages/StudentLookup';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -72,6 +73,7 @@ export default function App() {
           </Route>
           <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />
           <Route path="/lookup/:number" element={<Lookup />} />
+          <Route path="/parent/:adm" element={<StudentLookup />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

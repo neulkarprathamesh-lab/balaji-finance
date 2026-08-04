@@ -316,6 +316,7 @@ async def get_settings_doc():
             "q2_due_date": "2026-09-30",
             "q3_due_date": "2026-12-31",
             "reminder_lead_days": 7,
+            "manager_waiver_cap": 5000,
         }
         await db.settings.insert_one(dict(doc))
     doc.pop("_id", None)
@@ -328,7 +329,7 @@ async def read_settings(user = Depends(get_current_user)):
 @api.patch("/settings")
 async def update_settings(body: Dict[str, Any], user = Depends(require_roles("administrator"))):
     await get_settings_doc()  # ensure exists
-    allowed = {k: v for k, v in body.items() if k in ("school_name","school_address","school_phone","school_email","receipt_footer","notice_footer","bus_annual_months","q1_due_date","q2_due_date","q3_due_date","reminder_lead_days")}
+    allowed = {k: v for k, v in body.items() if k in ("school_name","school_address","school_phone","school_email","receipt_footer","notice_footer","bus_annual_months","q1_due_date","q2_due_date","q3_due_date","reminder_lead_days","manager_waiver_cap")}
     await db.settings.update_one({"id": SETTINGS_ID}, {"$set": allowed})
     await audit(user, "update", "settings", SETTINGS_ID, allowed)
     return await get_settings_doc()
@@ -706,13 +707,39 @@ async def list_adjustments(status: Optional[str] = None, user = Depends(get_curr
 async def approve_adjustment(aid: str, user = Depends(require_roles("administrator","manager"))):
     adj = await db.adjustments.find_one({"id": aid})
     if not adj: raise HTTPException(404, "Not found")
-    # Waiver cap: managers can approve up to ₹5,000; higher needs administrator
-    MANAGER_CAP = 5000.0
-    if user["role"] == "manager" and float(adj.get("amount", 0)) > MANAGER_CAP:
-        raise HTTPException(403, f"Adjustments over ₹{int(MANAGER_CAP):,} require administrator approval")
+    # Waiver cap from settings (default ₹5,000)
+    settings = await get_settings_doc()
+    cap = float(settings.get("manager_waiver_cap", 5000) or 5000)
+    if user["role"] == "manager" and float(adj.get("amount", 0)) > cap:
+        raise HTTPException(403, f"Adjustments over ₹{int(cap):,} require administrator approval")
     await db.adjustments.update_one({"id": aid}, {"$set":{"status":"approved","approved_by": user["id"],"approved_by_name": user["name"],"approved_at": now_iso()}})
     await audit(user, "approve", "adjustment", aid, {"amount": adj.get("amount")})
     return {"ok": True}
+
+@api.get("/public/student-lookup/{admission_no}")
+async def public_student_lookup(admission_no: str):
+    """View-only ledger for a student — used by Fee Notice QR."""
+    s = await db.students.find_one({"admission_no": admission_no}, {"_id": 0})
+    if not s: raise HTTPException(404, "Student not found")
+    receipts = await db.receipts.find({"student_id": s["id"], "status": {"$ne": "cancelled"}},
+                                      {"_id": 0, "cashier_id": 0}).sort("created_at", -1).to_list(200)
+    fs = None
+    if s.get("fee_structure_id"):
+        fs = await db.fee_structures.find_one({"id": s["fee_structure_id"]}, {"_id": 0})
+    paid = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") not in ("refund", "debit_voucher"))
+    refunded = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") == "refund")
+    adjustments = await db.adjustments.find({"student_id": s["id"], "status": "approved"}, {"_id": 0}).to_list(100)
+    adjusted = sum(a.get("amount", 0) for a in adjustments)
+    total_fee = fs.get("total", 0) if fs else 0
+    return {
+        "student": {"admission_no": s["admission_no"], "name": s["name"], "guardian_name": s.get("guardian_name"), "guardian_mobile": s.get("guardian_mobile")},
+        "ledger": {
+            "total_fee": total_fee, "paid": paid, "adjusted": adjusted, "refunded": refunded,
+            "outstanding": max(0, total_fee - paid - adjusted + refunded),
+            "receipts": [{"number": x["number"], "type": x.get("receipt_type"), "date": x.get("created_at"), "total": x.get("total"), "mode": x.get("payment_mode")} for x in receipts[:20]],
+            "receipts_count": len(receipts),
+        }
+    }
 
 @api.post("/adjustments/{aid}/reject")
 async def reject_adjustment(aid: str, body: Dict[str,str], user = Depends(require_roles("administrator","manager"))):

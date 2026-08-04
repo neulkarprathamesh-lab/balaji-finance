@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
 import { Printer, FileText } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function FeeNotices() {
   const [depts, setDepts] = useState([]);
@@ -104,14 +105,19 @@ export default function FeeNotices() {
 }
 
 function Notice({ s, preview = false }) {
+  const lookupUrl = `${window.location.origin}/parent/${s.admission_no}`;
   return (
     <div className={`bg-white border border-slate-300 mx-auto ${preview ? 'max-w-2xl' : ''}`} style={{ pageBreakAfter: 'always', minHeight: preview ? undefined : '95vh' }}>
       <div className="p-6">
         <div className="flex items-center gap-4 border-b-2 border-slate-900 pb-3 mb-4">
           <img src="https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg" alt="logo" className="w-16 h-16 rounded-full object-cover" />
-          <div>
+          <div className="flex-1">
             <div className="font-heading text-xl font-bold tracking-tight">BALAJI CONVENT & JUNIOR COLLEGE</div>
             <div className="text-[12px] text-slate-700">Butibori, Nagpur · {s.department_name} · Academic Year {s.academic_year || '—'}</div>
+          </div>
+          <div className="text-center">
+            <QRCodeSVG value={lookupUrl} size={64} level="M" includeMargin={false} />
+            <div className="text-[8px] uppercase tracking-widest text-slate-500 mt-1">Scan for ledger</div>
           </div>
         </div>
         <div className="text-center text-[13px] uppercase tracking-widest font-semibold my-3">Outstanding Fee Notice</div>

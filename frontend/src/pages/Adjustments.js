@@ -10,6 +10,7 @@ export default function Adjustments() {
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState('');
+  const [cap, setCap] = useState(5000);
   const [open, setOpen] = useState(!!sp.get('student'));
   const [f, setF] = useState({
     student_id: sp.get('student') || '',
@@ -22,6 +23,7 @@ export default function Adjustments() {
 
   const load = () => { const p = status ? `?status=${status}` : ''; api.get(`/adjustments${p}`).then(r => setRows(r.data)); };
   useEffect(() => { load(); }, [status]);
+  useEffect(() => { api.get('/settings').then(r => setCap(r.data.manager_waiver_cap ?? 5000)).catch(()=>{}); }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -50,17 +52,17 @@ export default function Adjustments() {
               {rows.map(a => (
                 <tr key={a.id}>
                   <td className="capitalize">{a.adjustment_type.replace('_',' ')}</td>
-                  <td className="text-right tabular font-medium">{inr(a.amount)}{a.status==='pending' && a.amount > 5000 && <div className="text-[10px] uppercase text-amber-700 font-semibold">Admin approval required</div>}</td>
+                  <td className="text-right tabular font-medium">{inr(a.amount)}{a.status==='pending' && a.amount > cap && <div className="text-[10px] uppercase text-amber-700 font-semibold">Admin approval required</div>}</td>
                   <td className="text-slate-600 text-[12px] max-w-xs truncate">{a.reason}</td>
                   <td className="text-[12px]">{a.requested_by_name}</td>
                   <td><span className={`text-[11px] px-1.5 py-0.5 rounded ${a.status==='approved'?'bg-emerald-100 text-emerald-800':a.status==='rejected'?'bg-red-100 text-red-800':'bg-amber-100 text-amber-800'}`}>{a.status}</span></td>
                   <td className="text-[12px] text-slate-500">{new Date(a.created_at).toLocaleDateString('en-IN')}</td>
                   <td>{a.status==='pending' && ['administrator','manager'].includes(user?.role) && (
                     <div className="flex gap-1">
-                      {(user.role === 'administrator' || a.amount <= 5000) ? (
+                      {(user.role === 'administrator' || a.amount <= cap) ? (
                         <button data-testid={`adj-approve-${a.id}`} onClick={()=>approve(a.id)} className="text-xs text-emerald-700 hover:underline">Approve</button>
                       ) : (
-                        <span className="text-xs text-slate-400" title="Managers can only approve up to ₹5,000">Admin only</span>
+                        <span className="text-xs text-slate-400" title={`Managers can only approve up to ₹${cap.toLocaleString('en-IN')}`}>Admin only</span>
                       )}
                       <button onClick={()=>reject(a.id)} className="text-xs text-red-600 hover:underline">Reject</button>
                     </div>
