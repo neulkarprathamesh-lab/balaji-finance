@@ -42,6 +42,7 @@ import ImportExcel from '@/pages/ImportExcel';
 import ImportsHistory from '@/pages/ImportsHistory';
 import Diagnostics from '@/pages/Diagnostics';
 import DeliveryCenter from '@/pages/DeliveryCenter';
+import ConfigSnapshots from '@/pages/ConfigSnapshots';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -94,6 +95,7 @@ export default function App() {
             <Route path="imports-history" element={<Protected roles={['administrator','manager','accountant']}><ImportsHistory /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
             <Route path="delivery-center" element={<Protected roles={['administrator']}><DeliveryCenter /></Protected>} />
+            <Route path="config-snapshots" element={<Protected roles={['administrator','manager']}><ConfigSnapshots /></Protected>} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="dashboard" element={<Navigate to="/" replace />} />
           </Route>

@@ -225,7 +225,27 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 20) — Simplified Delivery Center + One-Shot Offline Project ZIP
+## 2026-02-04 (continued 21) — Bulk Bus Fare Update + Configuration Snapshots
+### Bulk Bus Fare Update
+- New `POST /api/bus-stops/bulk-update` (admin/manager) with 4 operations: `increase_percent`, `decrease_percent`, `increase_fixed`, `decrease_fixed`. Optional `stop_ids[]` scope, `round_to` (₹1/10/50/100), `preview` toggle, `effective_date`, `reason`.
+- **Preview mode** returns every touched stop with `current_fare`, `new_fare`, `delta`, `students_affected`, plus totals.
+- **Apply mode** writes the new fares, stamps `last_fare_change_at` / `last_fare_change_by`, and records a rich audit entry (operation, value, students affected, reason).
+- **Frontend**: new "Bulk Fare Update" button on the Bus Stop Master toolbar opens a modal with the 4 operations as chips, value + rounding + effective-date + reason inputs, a Preview button, and a scrollable delta table. Confirm & Apply requires explicit acknowledgement.
+
+### Configuration Snapshots
+- New router `routers/snapshots.py` with a new `config_snapshots` collection that stores the full config as embedded JSON per academic year.
+- Endpoints: `GET /snapshots` (list), `POST /snapshots` (create, PIN-gated), `GET /snapshots/{sid}`, `GET /snapshots/{sid}/export` (ZIP with per-collection JSON + manifest, PIN-gated), `GET /snapshots/{a}/compare/{b}` (per-collection added/removed/changed counts + top 20 changed rows), `POST /snapshots/{sid}/restore` (DUAL-AUTH), `DELETE /snapshots/{sid}`.
+- Restore replaces every configuration collection (`settings`, `departments`, `classes`, `fee_heads`, `fee_structures`, `receipt_types`, `bus_routes`, `bus_stops`) — historical students, receipts, adjustments, extensions are untouched.
+- **Frontend**: new page `/config-snapshots` (admin + manager) with a Snapshots table (Year, Label, Records, Created), a "New Snapshot" modal, Export / Restore / Delete per row, and a Compare section that picks two snapshots and prints a per-collection diff table.
+- Nav entry: sidebar → **Config Snapshots** (below Settings, above Delivery Center).
+
+### Verified end-to-end
+- Bulk fare preview: 61 stops → `current_total=₹68,450` → `new_total=₹75,400` at +10% rounded to ₹10 (sample: stop 1 Butibori-Rukmani Township ₹850 → ₹940).
+- Snapshot create: archived 9 receipt types · 4 depts · 87 classes · 21 fee heads · 44 fee structures + settings + bus routes + bus stops in one go.
+- 47/47 pytest passing.
+- Distribution ZIP rebuilt at `/app/dist/BalajiConventFeeSoftware-v1.0-FINAL.zip` (1.7 MB compressed, complete source).
+
+
 Per owner request, the software will no longer expose its own source code / installer ZIP from inside the running app (security + simplicity). The Delivery Center is now trimmed to daily-ops artefacts only:
 - **In-app Delivery Center** (Administrator → Delivery Center) now shows 4 sections:
   - Database Package (latest backup + trigger new backup)

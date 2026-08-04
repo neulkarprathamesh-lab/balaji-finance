@@ -22,6 +22,7 @@ from routers import reports as reports_router  # noqa: E402
 from routers import config_io as config_io_router  # noqa: E402
 from routers import diagnostics as diagnostics_router  # noqa: E402
 from routers import deliverables as deliverables_router  # noqa: E402
+from routers import snapshots as snapshots_router  # noqa: E402
 import asyncio  # noqa: E402
 
 app = FastAPI(title="Balaji Convent Fee Software")
@@ -34,6 +35,7 @@ app.include_router(reports_router.router)
 app.include_router(config_io_router.router)
 app.include_router(diagnostics_router.router)
 app.include_router(deliverables_router.router)
+app.include_router(snapshots_router.router)
 
 app.add_middleware(
     CORSMiddleware,

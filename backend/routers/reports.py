@@ -235,6 +235,83 @@ async def list_bus_stops(user = Depends(get_current_user)):
     """Master list of every bus stop the school picks up from — one row per receipt-visible stop."""
     return await db.bus_stops.find({}, {"_id":0}).sort("stop_no", 1).to_list(500)
 
+
+@router.post("/bus-stops/bulk-update")
+async def bulk_update_bus_fares(body: Dict[str, Any], user = Depends(require_roles("administrator","manager"))):
+    """Bulk raise / lower every stop's monthly fee.
+    body = {
+      operation: 'increase_percent' | 'decrease_percent' | 'increase_fixed' | 'decrease_fixed',
+      value: number,
+      stop_ids: [ids?]   (empty = all active),
+      round_to: 10        (round the new fare to nearest N, default 10),
+      preview: bool,
+      effective_date: iso,
+      reason: str,
+    }
+    """
+    op = body.get("operation")
+    if op not in ("increase_percent","decrease_percent","increase_fixed","decrease_fixed"):
+        raise HTTPException(400, "operation must be one of increase_percent/decrease_percent/increase_fixed/decrease_fixed")
+    try:
+        value = float(body.get("value"))
+    except Exception:
+        raise HTTPException(400, "value must be a number")
+    if value < 0:
+        raise HTTPException(400, "value must be positive; use the correct operation for the direction")
+    round_to = int(body.get("round_to") or 10) or 1
+    stop_ids = body.get("stop_ids") or []
+    preview = bool(body.get("preview", True))
+    q: Dict[str, Any] = {"active": {"$ne": False}}
+    if stop_ids:
+        q["id"] = {"$in": stop_ids}
+    stops = await db.bus_stops.find(q, {"_id": 0}).sort("stop_no", 1).to_list(500)
+    if not stops:
+        raise HTTPException(400, "No active stops match the selection")
+    # Count students per stop
+    student_counts = {}
+    for s in stops:
+        student_counts[s["stop_no"]] = await db.students.count_documents({"bus_stop_no": s["stop_no"], "status": "active"})
+
+    def new_fare(old: float) -> float:
+        if op == "increase_percent": nf = old * (1 + value / 100)
+        elif op == "decrease_percent": nf = old * (1 - value / 100)
+        elif op == "increase_fixed":   nf = old + value
+        else: nf = old - value
+        if nf < 0: nf = 0
+        return round(nf / round_to) * round_to
+
+    rows = []
+    total_current = total_new = total_students = 0
+    for s in stops:
+        old = float(s.get("monthly_fee") or 0)
+        nf = new_fare(old)
+        stud = student_counts.get(s["stop_no"], 0)
+        rows.append({"id": s["id"], "stop_no": s["stop_no"], "stop_name": s.get("stop_name"),
+                     "current_fare": old, "new_fare": nf, "delta": nf - old, "students_affected": stud})
+        total_current += old; total_new += nf; total_students += stud
+
+    if preview:
+        return {"preview": True, "operation": op, "value": value, "round_to": round_to,
+                "rows": rows, "total_current": total_current, "total_new": total_new,
+                "total_students_affected": total_students,
+                "effective_date": body.get("effective_date"), "reason": body.get("reason","")}
+
+    for r in rows:
+        if r["new_fare"] != r["current_fare"]:
+            await db.bus_stops.update_one({"id": r["id"]}, {"$set": {"monthly_fee": r["new_fare"], "last_fare_change_at": now_iso(), "last_fare_change_by": user["name"]}})
+    await audit(user, "bulk_fare_update", "bus_stop", "", {
+        "operation": op, "value": value, "round_to": round_to,
+        "stops_changed": len([r for r in rows if r["new_fare"] != r["current_fare"]]),
+        "total_current": total_current, "total_new": total_new,
+        "students_affected": total_students,
+        "effective_date": body.get("effective_date"), "reason": body.get("reason",""),
+    })
+    return {"preview": False, "applied": True, "rows": rows,
+            "stops_changed": len([r for r in rows if r["new_fare"] != r["current_fare"]]),
+            "total_current": total_current, "total_new": total_new,
+            "total_students_affected": total_students}
+
+
 @router.post("/bus-stops")
 async def create_bus_stop(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
     try:
