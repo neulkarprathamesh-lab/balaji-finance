@@ -14,6 +14,7 @@ const nav = [
   { to: '/import-excel', label: 'Excel Import', icon: FileText, roles: ['administrator','manager','accountant'] },
   { to: '/imports-history', label: 'Import History', icon: ClipboardList, roles: ['administrator','manager','accountant'] },
   { to: '/new-receipt', label: 'New Receipt', icon: Receipt, roles: ['*'] },
+  { to: '/finance', label: 'Finance / Voucher', icon: Wallet, roles: ['administrator','manager','accountant'] },
   { to: '/receipts', label: 'Receipts', icon: FileText, roles: ['*'] },
   { to: '/adjustments', label: 'Fee Adjustments', icon: FileEdit, roles: ['*'] },
   { to: '/extensions', label: 'Payment Extensions', icon: CalendarClock, roles: ['*'] },

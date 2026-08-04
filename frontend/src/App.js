@@ -8,6 +8,10 @@ import Dashboard from '@/pages/Dashboard';
 import Students from '@/pages/Students';
 import StudentDetail from '@/pages/StudentDetail';
 import NewReceipt from '@/pages/NewReceipt';
+import ReceiptTypeSelector from '@/pages/ReceiptTypeSelector';
+import ReceiptTypes from '@/pages/ReceiptTypes';
+import Finance from '@/pages/Finance';
+import ConfigExportImport from '@/pages/ConfigExportImport';
 import NewReceiptAdvanced from '@/pages/NewReceiptAdvanced';
 import Receipts from '@/pages/Receipts';
 import ReceiptView from '@/pages/ReceiptView';
@@ -57,8 +61,12 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="students" element={<Students />} />
             <Route path="students/:id" element={<StudentDetail />} />
-            <Route path="new-receipt" element={<NewReceipt />} />
+            <Route path="new-receipt" element={<ReceiptTypeSelector />} />
+            <Route path="new-receipt/entry" element={<NewReceipt />} />
             <Route path="new-receipt-advanced" element={<NewReceiptAdvanced />} />
+            <Route path="finance" element={<Protected roles={['administrator','manager','accountant']}><Finance /></Protected>} />
+            <Route path="receipt-types" element={<Protected roles={['administrator']}><ReceiptTypes /></Protected>} />
+            <Route path="config-io" element={<Protected roles={['administrator']}><ConfigExportImport /></Protected>} />
             <Route path="receipts" element={<Receipts />} />
             <Route path="adjustments" element={<Adjustments />} />
             <Route path="extensions" element={<Extensions />} />

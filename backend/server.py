@@ -10,10 +10,12 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Any, Dict, Literal
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, Query, Header, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+import io, zipfile, json as _json
 
 # ---------------- DB ----------------
 mongo_url = os.environ['MONGO_URL']
@@ -748,6 +750,136 @@ async def next_receipt_number_by_prefix(prefix: str, academic_year: str) -> str:
     seq = doc.get("seq", 1) if doc else 1
     return f"{prefix}-{academic_year.split('-')[0]}-{seq:06d}"
 
+# ---------------- Administrator PIN gate (sensitive actions) ----------------
+async def require_admin_pin(x_admin_pin: Optional[str] = Header(None), user = Depends(require_roles("administrator"))):
+    if not x_admin_pin:
+        raise HTTPException(401, "Administrator PIN required")
+    current = await db.users.find_one({"id": user["id"]})
+    if not current.get("pin_hash"):
+        raise HTTPException(400, "Set your Administrator PIN in My Profile first.")
+    if not verify_password(x_admin_pin, current["pin_hash"]):
+        await audit(user, "admin_pin_fail", "auth", user["id"], {"event": "invalid_pin"})
+        raise HTTPException(403, "Invalid administrator PIN")
+    return user
+
+async def require_admin_dual(
+    x_admin_pin: Optional[str] = Header(None),
+    x_admin_password: Optional[str] = Header(None),
+    user = Depends(require_roles("administrator")),
+):
+    if not x_admin_pin or not x_admin_password:
+        raise HTTPException(401, "Administrator PIN and password required for this action")
+    current = await db.users.find_one({"id": user["id"]})
+    if not current.get("pin_hash") or not verify_password(x_admin_pin, current["pin_hash"]):
+        await audit(user, "admin_dual_fail", "auth", user["id"], {"event": "invalid_pin"})
+        raise HTTPException(403, "Invalid administrator PIN")
+    if not verify_password(x_admin_password, current["password_hash"]):
+        await audit(user, "admin_dual_fail", "auth", user["id"], {"event": "invalid_password"})
+        raise HTTPException(403, "Invalid administrator password")
+    return user
+
+@api.post("/auth/admin-pin/verify")
+async def verify_admin_pin(body: Dict[str, Any], user = Depends(require_roles("administrator"))):
+    """Frontend-friendly probe — verifies PIN before opening a sensitive UI."""
+    pin = body.get("pin","")
+    current = await db.users.find_one({"id": user["id"]})
+    if not current.get("pin_hash"):
+        raise HTTPException(400, "Administrator PIN not set. Please set it in My Profile.")
+    ok = verify_password(pin, current["pin_hash"])
+    await audit(user, "admin_pin_verify", "auth", user["id"], {"ok": ok})
+    if not ok:
+        raise HTTPException(403, "Invalid administrator PIN")
+    return {"ok": True}
+
+@api.get("/version")
+async def app_version():
+    return {
+        "app_version": "1.0.0",
+        "database_version": "1",
+        "receipt_template_version": "1.0",
+        "app_template_version": "1.0",
+        "build_date": "2026-02-04",
+        "developer": "Emergent Labs",
+        "server_time": now_iso(),
+    }
+
+# ---------------- Configuration Export / Import ----------------
+CONFIG_COLLECTIONS = [
+    "receipt_types", "departments", "classes", "fee_heads", "fee_structures",
+    "settings", "bus_routes",
+]
+
+@api.get("/config/export")
+async def export_config(user = Depends(require_admin_pin)):
+    """Export school configuration as a ZIP (JSON per collection). Passwords & PINs are stripped from users."""
+    buf = io.BytesIO()
+    manifest = {"exported_at": now_iso(), "exported_by": user["name"], "app_version": "1.0.0", "collections": []}
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for coll in CONFIG_COLLECTIONS:
+            rows = await db[coll].find({}, {"_id":0}).to_list(20000)
+            zf.writestr(f"{coll}.json", _json.dumps(rows, indent=2, default=str))
+            manifest["collections"].append({"name": coll, "count": len(rows)})
+        # Users: strip password_hash and pin_hash for portability
+        users = await db.users.find({}, {"_id":0, "password_hash":0, "pin_hash":0}).to_list(500)
+        zf.writestr("users.json", _json.dumps(users, indent=2, default=str))
+        manifest["collections"].append({"name": "users", "count": len(users), "notes": "password/pin stripped"})
+        zf.writestr("manifest.json", _json.dumps(manifest, indent=2))
+        readme = ("# Balaji Fee Software — Configuration Export\n\n"
+                  f"Exported: {manifest['exported_at']}\nBy: {manifest['exported_by']}\n\n"
+                  "Import this ZIP into another school PC via Administration → Config Import.\n"
+                  "Users are exported WITHOUT passwords/PINs — you must reset them after import.\n")
+        zf.writestr("README.md", readme)
+    buf.seek(0)
+    await audit(user, "config_export", "system", "", {"collections": [c["name"] for c in manifest["collections"]]})
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="balaji-config-{date.today().isoformat()}.zip"'}
+    )
+
+@api.post("/config/import")
+async def import_config(
+    replace: bool = False,
+    file: UploadFile = File(...),
+    user = Depends(require_admin_dual),
+):
+    """Restore collections from a config ZIP. `replace=false` upserts by id; `replace=true` drops+inserts each collection."""
+    content = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content), "r")
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "Not a valid ZIP")
+    names = set(zf.namelist())
+    if "manifest.json" not in names:
+        raise HTTPException(400, "manifest.json missing — this is not a Balaji config ZIP")
+    manifest = _json.loads(zf.read("manifest.json").decode())
+    summary: Dict[str, Any] = {"imported": {}}
+    for coll in CONFIG_COLLECTIONS + ["users"]:
+        fn = f"{coll}.json"
+        if fn not in names: continue
+        rows = _json.loads(zf.read(fn).decode() or "[]")
+        if replace:
+            await db[coll].delete_many({})
+        added = updated = 0
+        for r in rows:
+            if not isinstance(r, dict) or not r.get("id"):
+                continue
+            if coll == "users":
+                # never overwrite existing user credentials
+                if await db.users.find_one({"id": r["id"]}): 
+                    continue
+                r["password_hash"] = hash_password(gen_id()[:12])  # random temp password
+                r["pin_hash"] = None
+                await db.users.insert_one(r); added += 1; continue
+            existing = await db[coll].find_one({"id": r["id"]})
+            if existing:
+                await db[coll].update_one({"id": r["id"]}, {"$set": r}); updated += 1
+            else:
+                await db[coll].insert_one(r); added += 1
+        summary["imported"][coll] = {"added": added, "updated": updated, "total_in_file": len(rows)}
+    await audit(user, "config_import", "system", "", {"replace": replace, "summary": summary, "manifest": manifest})
+    return {"ok": True, "replace_mode": replace, "manifest": manifest, "summary": summary}
+
+
 # ---------------- Receipt Types (DB-backed) ----------------
 DEFAULT_RECEIPT_TYPES = [
     {"code":"EP",     "name":"Balaji Convent English Primary School",                 "department_name":"English Primary Section",              "category":"school", "description":"Fees for Class 1–4 (English medium)",              "icon":"GraduationCap",   "display_order":10, "tabs":["school","installment","misc"]},
@@ -799,7 +931,7 @@ async def get_receipt_type(rtid: str, user = Depends(get_current_user)):
     return doc
 
 @api.post("/receipt-types")
-async def create_receipt_type(body: ReceiptTypeIn, user = Depends(require_roles("administrator"))):
+async def create_receipt_type(body: ReceiptTypeIn, user = Depends(require_admin_pin)):
     if await db.receipt_types.find_one({"code": body.code.upper()}):
         raise HTTPException(400, f"Receipt type with prefix {body.code} already exists")
     rid = gen_id()
@@ -809,7 +941,7 @@ async def create_receipt_type(body: ReceiptTypeIn, user = Depends(require_roles(
     return {k:v for k,v in doc.items() if k != "_id"}
 
 @api.patch("/receipt-types/{rtid}")
-async def update_receipt_type(rtid: str, body: Dict[str, Any], user = Depends(require_roles("administrator"))):
+async def update_receipt_type(rtid: str, body: Dict[str, Any], user = Depends(require_admin_pin)):
     existing = await db.receipt_types.find_one({"id": rtid})
     if not existing: raise HTTPException(404, "Not found")
     allowed = {"name","department_name","department_id","category","description","icon","display_order","enabled","tabs","default_payment_modes","print_template","report_category","notes","archived"}
@@ -830,7 +962,7 @@ async def update_receipt_type(rtid: str, body: Dict[str, Any], user = Depends(re
     return doc
 
 @api.delete("/receipt-types/{rtid}")
-async def delete_receipt_type(rtid: str, user = Depends(require_roles("administrator"))):
+async def delete_receipt_type(rtid: str, user = Depends(require_admin_pin)):
     doc = await db.receipt_types.find_one({"id": rtid})
     if not doc: raise HTTPException(404, "Not found")
     used = await db.receipts.count_documents({"receipt_type_id": rtid})
@@ -841,7 +973,7 @@ async def delete_receipt_type(rtid: str, user = Depends(require_roles("administr
     return {"deleted": True}
 
 @api.post("/receipt-types/{rtid}/archive")
-async def archive_receipt_type(rtid: str, user = Depends(require_roles("administrator"))):
+async def archive_receipt_type(rtid: str, user = Depends(require_admin_pin)):
     doc = await db.receipt_types.find_one({"id": rtid})
     if not doc: raise HTTPException(404, "Not found")
     await db.receipt_types.update_one({"id": rtid}, {"$set": {"archived": True, "enabled": False, "updated_at": now_iso()}})
@@ -849,7 +981,7 @@ async def archive_receipt_type(rtid: str, user = Depends(require_roles("administ
     return {"archived": True}
 
 @api.post("/receipt-types/reseed-defaults")
-async def reseed_receipt_types(user = Depends(require_roles("administrator"))):
+async def reseed_receipt_types(user = Depends(require_admin_pin)):
     """Idempotent — only adds any DEFAULT_RECEIPT_TYPES rows whose prefix is missing."""
     depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
     now = now_iso(); added = []
