@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
 import { toast } from 'sonner';
+import { Sparkles } from 'lucide-react';
 
 export default function FeeStructure() {
   const [depts, setDepts] = useState([]);
@@ -12,6 +13,26 @@ export default function FeeStructure() {
   const [cls, setCls] = useState('');
   const [items, setItems] = useState([]);
   const [dup, setDup] = useState(null);
+  const [seeding, setSeeding] = useState(false);
+
+  const reload = async () => {
+    const [d, c, h, s] = await Promise.all([
+      api.get('/departments'), api.get('/classes'), api.get('/fee-heads'), api.get('/fee-structures')
+    ]);
+    setDepts(d.data); setClasses(c.data); setFeeHeads(h.data); setStructures(s.data);
+  };
+  useEffect(() => { reload(); }, []);
+
+  const seed2026 = async () => {
+    if (!window.confirm('Load all 29 fee structures from the 2026-27 PDF? Classes will be created for English / Semi-English / Junior College mediums. Existing structures are skipped.')) return;
+    setSeeding(true);
+    try {
+      const { data } = await api.post('/fee-structures/seed-2026');
+      toast.success(`✓ ${data.structures_created} structures created · ${data.classes_created} new classes · ${data.skipped} skipped`);
+      await reload();
+    } catch (e) { toast.error(e?.response?.data?.detail || 'Failed'); }
+    setSeeding(false);
+  };
 
   useEffect(() => {
     api.get('/departments').then(r => setDepts(r.data));
@@ -29,14 +50,20 @@ export default function FeeStructure() {
     try {
       await api.post('/fee-structures', { department_id: dept, class_id: cls, academic_year:'2026-27', items });
       toast.success('Saved');
-      const { data } = await api.get('/fee-structures'); setStructures(data);
+      await reload();
       setItems([]);
     } catch (e) { toast.error(e?.response?.data?.detail || 'Failed'); }
   };
 
   return (
     <>
-      <PageHeader title="Fee Structure" subtitle="Define per department + class + academic year" />
+      <PageHeader title="Fee Structure" subtitle="Define per department + class + academic year"
+        actions={
+          <button data-testid="fs-seed" onClick={seed2026} disabled={seeding} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-sm rounded flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4" /> {seeding ? 'Loading…' : 'Load 2026-27 (29 classes)'}
+          </button>
+        }
+      />
       <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded p-4">
           <div className="grid grid-cols-2 gap-4 mb-4">

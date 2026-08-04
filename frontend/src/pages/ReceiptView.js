@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '@/lib/api';
 import { inr } from '@/components/Layout';
-import { Printer, ArrowLeft, XCircle } from 'lucide-react';
+import { Printer, ArrowLeft, XCircle, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
+import { QRCodeSVG } from 'qrcode.react';
 
 const LOGO = "https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg";
 const rs = (n) => (n == null || n === '' ? '' : Number(n).toFixed(2));
@@ -14,13 +15,14 @@ export default function ReceiptView() {
   const nav = useNavigate();
   const { user } = useAuth();
   const [r, setR] = useState(null);
+  const [twoUp, setTwoUp] = useState(false);
   const load = () => api.get(`/receipts/${id}`).then(res => setR(res.data));
   useEffect(() => { load(); }, [id]);
 
-  const doPrint = async () => {
+  const doPrint = async (twoCopies) => {
+    setTwoUp(!!twoCopies);
     await api.post(`/receipts/${id}/reprint`);
-    window.print();
-    load();
+    setTimeout(() => { window.print(); setTwoUp(false); load(); }, 200);
   };
 
   const doCancel = async () => {
@@ -33,22 +35,33 @@ export default function ReceiptView() {
   if (!r) return <div className="p-8 text-sm text-slate-500">Loading…</div>;
   const canCancel = ['administrator','manager'].includes(user?.role) && r.status !== 'cancelled';
 
+  const Body = () => (
+    r.receipt_type === 'debit_voucher' ? <DebitVoucher r={r} /> :
+    r.receipt_type === 'bus' ? <BusReceipt r={r} /> :
+    (r.receipt_type === 'general_money' || r.receipt_type === 'general_collection') ? <MoneyReceipt r={r} /> :
+    <FeeReceipt r={r} />
+  );
+
   return (
     <div className="min-h-screen bg-slate-100">
       <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between no-print">
         <button onClick={() => nav(-1)} className="text-sm text-slate-600 hover:text-slate-900 flex items-center gap-1.5"><ArrowLeft className="w-4 h-4" /> Back</button>
         <div className="flex gap-2">
           {canCancel && <button data-testid="rv-cancel" onClick={doCancel} className="h-9 px-3 border border-red-300 text-red-700 rounded text-sm flex items-center gap-1.5 hover:bg-red-50"><XCircle className="w-4 h-4" /> Cancel Receipt</button>}
-          <button data-testid="rv-print" onClick={doPrint} className="h-9 px-3 bg-blue-600 text-white rounded text-sm flex items-center gap-1.5 hover:bg-blue-700"><Printer className="w-4 h-4" /> Print</button>
+          <button data-testid="rv-print-2up" onClick={() => doPrint(true)} className="h-9 px-3 border border-slate-300 rounded text-sm flex items-center gap-1.5 hover:bg-white"><Copy className="w-4 h-4" /> Print Two-Up (Parent + Office)</button>
+          <button data-testid="rv-print" onClick={() => doPrint(false)} className="h-9 px-3 bg-blue-600 text-white rounded text-sm flex items-center gap-1.5 hover:bg-blue-700"><Printer className="w-4 h-4" /> Print</button>
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto p-6">
         <div className="print-page bg-white border border-slate-300 shadow-sm p-6" data-testid="rv-body">
-          {r.receipt_type === 'debit_voucher' ? <DebitVoucher r={r} /> :
-           r.receipt_type === 'bus' ? <BusReceipt r={r} /> :
-           (r.receipt_type === 'general_money' || r.receipt_type === 'general_collection') ? <MoneyReceipt r={r} /> :
-           <FeeReceipt r={r} />}
+          <Body />
+          {twoUp && (
+            <>
+              <div className="text-center text-[10px] text-slate-500 tracking-widest my-4 border-t-2 border-dashed border-slate-400 pt-1">— — — — — CUT HERE · Parent's Copy above · Office Copy below — — — — —</div>
+              <Body />
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -132,6 +145,7 @@ function FeeReceipt({ r }) {
           <div className="font-mono font-semibold">{dateStr}</div>
           <div className="text-slate-500 uppercase tracking-widest text-[9px] mt-1">Academic Year</div>
           <div className="font-mono font-semibold">{r.academic_year}</div>
+          <div className="flex justify-end mt-1"><QRCodeSVG value={r.number} size={56} level="M" includeMargin={false} /></div>
         </div>
       </div>
 

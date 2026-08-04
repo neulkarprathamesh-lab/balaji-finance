@@ -906,6 +906,73 @@ async def rollover_fee_structures(body: RolloverIn, user = Depends(require_roles
     await audit(user, "rollover", "fee_structure", "", {"from": body.from_academic_year, "to": body.to_academic_year, "created": created})
     return {"created": created, "from": body.from_academic_year, "to": body.to_academic_year}
 
+@api.post("/fee-structures/seed-2026")
+async def seed_2026_fee_structures(user = Depends(require_roles("administrator","manager"))):
+    """Auto-load the 29 class fee structures from /app/memory/fee_structure_2026.json"""
+    import json as _json
+    try:
+        with open("/app/memory/fee_structure_2026.json", "r") as f:
+            rows = _json.load(f)
+    except Exception as e:
+        raise HTTPException(500, f"Cannot read seed file: {e}")
+
+    # Ensure fee heads exist
+    fee_head_names = ["Admission Fee", "Continuation Fee", "Tuition Q1", "Tuition Q2", "Tuition Q3", "Term Fees", "Tuition Fee", "Practical Fee"]
+    fh_by_name: Dict[str, dict] = {fh["name"]: fh for fh in await db.fee_heads.find({}, {"_id":0}).to_list(200)}
+    for nm in fee_head_names:
+        if nm not in fh_by_name:
+            code = nm.replace(" ","_").upper()[:8]
+            fh = {"id": gen_id(), "name": nm, "code": code, "category": "school", "created_at": now_iso()}
+            await db.fee_heads.insert_one(fh); fh_by_name[nm] = fh
+
+    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
+
+    def pick_dept(class_name: str, medium: str) -> Optional[dict]:
+        cn = class_name.lower()
+        if medium == "Junior College": return depts.get("JC")
+        if "9th" in cn or "10th" in cn: return depts.get("SEC")
+        if medium == "English": return depts.get("EP")
+        if medium in ("Semi-English", "Semi English", "Marathi (Semi)"): return depts.get("MP")
+        return depts.get("EP")
+
+    ay = "2026-27"
+    created_classes = 0; created_structures = 0; skipped = 0
+    for row in rows:
+        cname = row["class_name"]; medium = row.get("medium", "English"); fees = row.get("fees", {})
+        d = pick_dept(cname, medium)
+        if not d: continue
+        # Ensure class exists (unique by dept + name + medium)
+        cls = await db.classes.find_one({"department_id": d["id"], "name": cname, "medium": medium}, {"_id":0})
+        if not cls:
+            cls = {"id": gen_id(), "department_id": d["id"], "name": cname, "medium": medium, "created_at": now_iso()}
+            await db.classes.insert_one(cls); created_classes += 1
+        # Skip if a structure already exists
+        existing_fs = await db.fee_structures.find_one({"class_id": cls["id"], "academic_year": ay})
+        if existing_fs:
+            skipped += 1; continue
+        items = []
+        total = 0
+        for k, v in fees.items():
+            if not isinstance(v, (int, float)) or v <= 0: continue
+            if k == "Total" or k == "Total Fees": continue
+            fh = fh_by_name.get(k) or fh_by_name.get(k.replace(" ", ""))
+            if not fh:
+                # Create ad-hoc fee head
+                fh = {"id": gen_id(), "name": k, "code": k.replace(" ","_").upper()[:8], "category":"school", "created_at": now_iso()}
+                await db.fee_heads.insert_one(fh); fh_by_name[k] = fh
+            items.append({"fee_head_id": fh["id"], "fee_head_name": k, "amount": float(v),
+                          "installment": ("Q1" if "Q1" in k else "Q2" if "Q2" in k else "Q3" if "Q3" in k else None)})
+            total += float(v)
+        await db.fee_structures.insert_one({
+            "id": gen_id(),
+            "department_id": d["id"], "class_id": cls["id"],
+            "academic_year": ay, "items": items, "total": total,
+            "seeded_from": "fee_structure_2026.json", "created_at": now_iso(),
+        })
+        created_structures += 1
+    await audit(user, "seed", "fee_structure", "", {"classes": created_classes, "structures": created_structures, "skipped": skipped})
+    return {"classes_created": created_classes, "structures_created": created_structures, "skipped": skipped, "total_rows": len(rows)}
+
 # ---------------- Bus Routes ----------------
 @api.get("/bus-routes")
 async def list_bus_routes(user = Depends(get_current_user)):
