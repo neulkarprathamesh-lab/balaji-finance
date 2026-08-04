@@ -225,7 +225,15 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 17) — Bus Stop Master + Excel Dropdown Template
+## 2026-02-04 (continued 18) — Bus Stop Manager + Student Bus Card + Receipt Bus Row + Structure Preview
+- **Bus Stop Manager UI** (`/bus-stops`, admin/manager/accountant): full CRUD for stops. Add via modal (auto-locks stop_no on edit), inline Edit, Deactivate/Activate toggle, and Delete (admin-only, refuses if any student is still assigned). Live search on number or name. Header shows totals + average monthly fare.
+- **Backend endpoints** added: `POST /api/bus-stops`, `PATCH /api/bus-stops/{id}`, `DELETE /api/bus-stops/{id}` — all fully role-gated and audited. Delete rejects with a friendly 409 when the stop still has students assigned.
+- **Student Detail Bus Card**: `/students/:id` now shows a dedicated Bus Pickup card next to the Fee Structure card — stop number, name and monthly fare, or a "Not on the school bus" hint. `GET /students/{sid}/ledger` now denormalises the current `monthly_fee` from the bus-stops master so the card always reflects the latest fare, even if the school updated it.
+- **Receipt Print refresh**: `ReceiptView.js` now renders a "BUS STOP" row inside the DETAILS block whenever the student is on a route (shows `#no · stop_name`). Also added a Stream row for JC students. Falls back to the receipt's rich student_snapshot so old receipts keep working.
+- **Fee Structure Preview → Publish**: added a Preview button next to Save that opens a modal showing the class + department, the three key totals (Admission, Continuation, Grand Total) and every line item. "Publish Structure →" is the only way to save from the preview, giving admins a last look before overwriting the previous year's numbers.
+- **Verified**: bus-stops CRUD roundtrip (create → patch fee to ₹1,450 + deactivate → delete). Playwright confirms the /bus-stops page renders with all 61 stops, the "New Stop" modal opens on click, Edit buttons render on every row. 47/47 pytest still passing. Distribution ZIP rebuilt.
+
+
 - **Bus Stop master list**: seeded 61 stops from the school's `BUS Fees stucture 2016-17 to ...` PDF into a new `bus_stops` MongoDB collection. Each row has `stop_no`, `stop_name` (transliterated to English so receipts stay ASCII-safe), `monthly_fee`, `academic_year`, `active`. Fees range ₹850 (Butibori main-town stops) to ₹1,400 (Asola Sawangi / Chimnajhari).
 - **New endpoints**:
   - `GET /api/bus-stops` — master list, sorted by stop number

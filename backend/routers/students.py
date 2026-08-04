@@ -41,6 +41,10 @@ async def student_ledger(sid: str, user = Depends(get_current_user)):
     fs = None
     if s.get("fee_structure_id"):
         fs = await db.fee_structures.find_one({"id": s["fee_structure_id"]}, {"_id":0})
+    if s.get("bus_stop_no"):
+        stop = await db.bus_stops.find_one({"stop_no": s["bus_stop_no"]}, {"_id":0})
+        if stop:
+            s["bus_stop_monthly_fee"] = stop.get("monthly_fee")
     total_paid = sum(r.get("total", 0) for r in receipts if r.get("receipt_type") not in ("refund","debit_voucher"))
     total_refunded = sum(r.get("total", 0) for r in receipts if r.get("receipt_type") == "refund")
     total_adjusted = sum(a.get("amount", 0) for a in adjustments)

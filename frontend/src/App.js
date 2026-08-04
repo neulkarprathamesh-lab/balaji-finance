@@ -25,6 +25,7 @@ import Cancellations from '@/pages/Cancellations';
 import Concessions from '@/pages/Concessions';
 import Promotion from '@/pages/Promotion';
 import BusRoutes from '@/pages/BusRoutes';
+import BusStops from '@/pages/BusStops';
 import FeeNotices from '@/pages/FeeNotices';
 import Profile from '@/pages/Profile';
 import Settings from '@/pages/Settings';
@@ -80,6 +81,7 @@ export default function App() {
             <Route path="concessions" element={<Protected roles={['administrator','manager','accountant']}><Concessions /></Protected>} />
             <Route path="promotion" element={<Protected roles={['administrator','manager']}><Promotion /></Protected>} />
             <Route path="bus-routes" element={<BusRoutes />} />
+            <Route path="bus-stops" element={<BusStops />} />
             <Route path="fee-notices" element={<FeeNotices />} />
             <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<Protected roles={['administrator']}><Settings /></Protected>} />

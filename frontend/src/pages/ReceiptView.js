@@ -252,10 +252,12 @@ function FeeReceipt({ r, rt }) {
           {show('parent_name') && <Row label="FATHER / GUARDIAN" value={meta.guardian_name} />}
           {show('admission_no') && <Row label="ADMISSION NO." value={r.student_snapshot?.admission_no} mono />}
           {show('parent_name') && <Row label="MOTHER NAME" value={meta.mother_name} />}
-          {show('class') && <Row label="CLASS / DIVISION" value={meta.class_name} />}
-          {show('mobile') && <Row label="CONTACT NO." value={meta.guardian_mobile} mono />}
-          {show('roll_no') && <Row label="ROLL NO." value={meta.roll_no} />}
-          <Row label="MEDIUM" value={meta.medium} />
+          {show('class') && <Row label="CLASS / DIVISION" value={meta.class_name || r.student_snapshot?.class_name} />}
+          {show('mobile') && <Row label="CONTACT NO." value={meta.guardian_mobile || r.student_snapshot?.guardian_mobile} mono />}
+          {show('roll_no') && <Row label="ROLL NO." value={meta.roll_no || r.student_snapshot?.roll_no} />}
+          <Row label="MEDIUM" value={meta.medium || r.student_snapshot?.medium} />
+          {r.student_snapshot?.stream && <Row label="STREAM" value={r.student_snapshot.stream} />}
+          {r.student_snapshot?.bus_stop_name && <Row label="BUS STOP" value={`#${r.student_snapshot.bus_stop_no} · ${r.student_snapshot.bus_stop_name}`} />}
           {show('session') && <Row label="SESSION" value={meta.session || r.academic_year} />}
           {show('department') && <Row label="DEPARTMENT" value={rt?.department_name || r.department_name} />}
           {code === 'JC' && <Row label="FACULTI" value={meta.faculti} />}

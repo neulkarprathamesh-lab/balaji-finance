@@ -235,6 +235,50 @@ async def list_bus_stops(user = Depends(get_current_user)):
     """Master list of every bus stop the school picks up from — one row per receipt-visible stop."""
     return await db.bus_stops.find({}, {"_id":0}).sort("stop_no", 1).to_list(500)
 
+@router.post("/bus-stops")
+async def create_bus_stop(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
+    try:
+        stop_no = int(body.get("stop_no"))
+    except Exception:
+        raise HTTPException(400, "stop_no must be a number")
+    if await db.bus_stops.find_one({"stop_no": stop_no}):
+        raise HTTPException(400, f"Stop no {stop_no} already exists")
+    doc = {
+        "id": gen_id(), "stop_no": stop_no,
+        "stop_name": str(body.get("stop_name", "")).strip(),
+        "monthly_fee": float(body.get("monthly_fee") or 0),
+        "academic_year": body.get("academic_year") or "2026-27",
+        "active": True, "created_at": now_iso(),
+    }
+    if not doc["stop_name"]:
+        raise HTTPException(400, "stop_name is required")
+    await db.bus_stops.insert_one(doc)
+    await audit(user, "create", "bus_stop", doc["id"], {"stop_no": stop_no, "name": doc["stop_name"]})
+    return {k:v for k,v in doc.items() if k != "_id"}
+
+@router.patch("/bus-stops/{sid}")
+async def update_bus_stop(sid: str, body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
+    allowed = {k: v for k, v in body.items() if k in ("stop_name", "monthly_fee", "active", "academic_year")}
+    if "monthly_fee" in allowed:
+        allowed["monthly_fee"] = float(allowed["monthly_fee"] or 0)
+    r = await db.bus_stops.update_one({"id": sid}, {"$set": allowed})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Bus stop not found")
+    await audit(user, "update", "bus_stop", sid, allowed)
+    return {"ok": True}
+
+@router.delete("/bus-stops/{sid}")
+async def delete_bus_stop(sid: str, user = Depends(require_roles("administrator"))):
+    doc = await db.bus_stops.find_one({"id": sid})
+    if not doc:
+        raise HTTPException(404, "Bus stop not found")
+    used = await db.students.count_documents({"bus_stop_no": doc.get("stop_no")})
+    if used > 0:
+        raise HTTPException(409, f"{used} student(s) still assigned to this stop — reassign them first or set the stop to inactive instead.")
+    await db.bus_stops.delete_one({"id": sid})
+    await audit(user, "delete", "bus_stop", sid, {"stop_no": doc.get("stop_no")})
+    return {"deleted": True}
+
 @router.post("/bus-stops/seed-2026")
 async def seed_bus_stops(replace: bool = False, user = Depends(require_roles("administrator","manager"))):
     import json as _json

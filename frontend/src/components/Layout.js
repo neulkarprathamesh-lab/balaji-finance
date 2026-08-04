@@ -23,6 +23,7 @@ const nav = [
   { to: '/extensions', label: 'Payment Extensions', icon: CalendarClock, roles: ['*'] },
   { to: '/reminders', label: 'Reminders', icon: Bell, roles: ['*'] },
   { to: '/bus-routes', label: 'Bus Routes', icon: Bus, roles: ['*'] },
+  { to: '/bus-stops', label: 'Bus Stop Master', icon: Bus, roles: ['administrator','manager','accountant'] },
   { to: '/fee-notices', label: 'Fee Notices', icon: Mail, roles: ['*'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, roles: ['*'] },
   { to: '/defaulters', label: 'Defaulters', icon: XCircle, roles: ['*'] },

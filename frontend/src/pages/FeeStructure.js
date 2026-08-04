@@ -87,7 +87,25 @@ export default function FeeStructure() {
           </table>
           <div className="flex justify-between mt-3">
             <button onClick={addItem} className="text-sm text-blue-700 hover:underline">+ Add item</button>
-            <button onClick={save} data-testid="fs-save" className="h-9 px-4 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Save Structure</button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  if (!dept || !cls) return toast.error('Select department & class first');
+                  const d = depts.find(x=>x.id===dept);
+                  const c = classes.find(x=>x.id===cls);
+                  setPreview({
+                    department: d, klass: c, items,
+                    total,
+                    academic_year: '2026-27',
+                    admission: items.filter(i => feeHeads.find(fh=>fh.id===i.fee_head_id)?.name?.toLowerCase() === 'admission fee').reduce((s,i)=>s+(+i.amount||0),0),
+                    continuation: items.filter(i => feeHeads.find(fh=>fh.id===i.fee_head_id)?.name?.toLowerCase() === 'continuation fee').reduce((s,i)=>s+(+i.amount||0),0),
+                  });
+                }}
+                data-testid="fs-preview"
+                className="h-9 px-3 border border-slate-300 rounded text-sm hover:bg-slate-50 inline-flex items-center gap-1.5"
+              ><Eye className="w-4 h-4" /> Preview</button>
+              <button onClick={save} data-testid="fs-save" className="h-9 px-4 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Save Structure</button>
+            </div>
           </div>
         </div>
 
@@ -127,6 +145,55 @@ export default function FeeStructure() {
         </div>
       </div>
       {dup && <DuplicateModal src={dup} classes={classes} depts={depts} onClose={() => setDup(null)} onDone={async () => { setDup(null); const { data } = await api.get('/fee-structures'); setStructures(data); }} />}
+      {preview && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 no-print" data-testid="fs-preview-modal">
+          <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div className="font-heading font-semibold">Structure Preview — {preview.department?.name} · {preview.klass?.name}</div>
+              <button onClick={() => setPreview(null)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="text-[13px] text-slate-600">
+                Review this structure before publishing. Once saved, students in this class will use these amounts automatically.
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-sm">
+                <div className="bg-slate-50 p-3 rounded border border-slate-200">
+                  <div className="text-[10px] uppercase tracking-widest text-slate-500">Admission (one-time)</div>
+                  <div className="font-heading text-xl font-semibold tabular mt-1">{inr(preview.admission || 0)}</div>
+                </div>
+                <div className="bg-slate-50 p-3 rounded border border-slate-200">
+                  <div className="text-[10px] uppercase tracking-widest text-slate-500">Continuation (returning)</div>
+                  <div className="font-heading text-xl font-semibold tabular mt-1">{inr(preview.continuation || 0)}</div>
+                </div>
+                <div className="bg-blue-50 p-3 rounded border border-blue-200">
+                  <div className="text-[10px] uppercase tracking-widest text-blue-700">Grand Total</div>
+                  <div className="font-heading text-xl font-semibold tabular mt-1 text-blue-900">{inr(preview.total || 0)}</div>
+                </div>
+              </div>
+              <div className="border border-slate-200 rounded overflow-hidden">
+                <table className="w-full dense-table">
+                  <thead><tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-600"><th className="pl-3 py-2">Fee Head</th><th className="text-right pr-3">Amount</th></tr></thead>
+                  <tbody>
+                    {preview.items.map((it, i) => {
+                      const fh = feeHeads.find(h => h.id === it.fee_head_id);
+                      return <tr key={i}><td className="pl-3 py-1.5">{fh?.name || '—'}</td><td className="text-right pr-3 tabular font-mono">{inr(+it.amount || 0)}</td></tr>;
+                    })}
+                    <tr className="bg-slate-100 border-t border-slate-300 font-semibold"><td className="pl-3 py-2">Total</td><td className="text-right pr-3 tabular font-mono">{inr(preview.total)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50">
+              <button onClick={() => setPreview(null)} className="h-9 px-3 border border-slate-300 rounded text-sm">Keep Editing</button>
+              <button
+                data-testid="fs-preview-publish"
+                onClick={async () => { setPreview(null); await save(); }}
+                className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-sm font-semibold"
+              >Publish Structure →</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
