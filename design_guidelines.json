@@ -1,0 +1,113 @@
+{
+  "theme": "light",
+  "typography": {
+    "headings": {
+      "family": "Work Sans",
+      "weights": ["500", "600"],
+      "usage": "Page titles, KPI numbers, Dashboard section headers."
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "weights": ["400", "500", "600"],
+      "usage": "Data tables, transaction logs, input fields, labels. Highly recommended for tabular figures ensuring numbers align perfectly in accounting grids."
+    },
+    "scale": {
+      "h1": "text-2xl sm:text-3xl font-semibold tracking-tight",
+      "h2": "text-xl sm:text-2xl font-medium tracking-tight",
+      "h3": "text-lg font-medium",
+      "body": "text-sm",
+      "small": "text-xs tracking-wide uppercase",
+      "kpi_value": "text-3xl sm:text-4xl font-semibold tracking-tighter"
+    }
+  },
+  "colors": {
+    "archetype": "Swiss & High-Contrast (Authority, Clarity, Truth)",
+    "description": "A serious, Tally-like professional color scheme. Functional color semantics with a muted slate structural base. Absolute NO teal green/blue. NO purple/violet.",
+    "palette": {
+      "primary": "#2563EB",
+      "primary_hover": "#1D4ED8",
+      "background_base": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "text_main": "#0F172A",
+      "text_muted": "#64748B",
+      "border": "#E2E8F0",
+      "semantic": {
+        "success": "#16A34A",
+        "danger_overdue": "#DC2626",
+        "warning_pending": "#D97706"
+      }
+    }
+  },
+  "visual_enhancers": {
+    "surfaces": "Flat Solid surfaces. NO Glassmorphism for data panels. High information density demands crisp, opaque backgrounds to avoid refraction of data.",
+    "borders": "1px crisp solid lines (`border-slate-200`). Expose the grid skeleton in tables.",
+    "shadows": "Minimalist. Soft ambient shadow for hover states only (`shadow-sm`). Use borders for structure, not shadows.",
+    "empty_states": "Functional and instructive (e.g., 'No receipts generated today' with a subtle grey icon), avoiding excessive illustration."
+  },
+  "component_guidelines": {
+    "data_tables": "High-density / compact rows (40px height). Sticky headers, frozen first columns. Use 'IBM Plex Sans' for tabular figures. Zebra striping for readability.",
+    "kpi_cards": "Compact card grids. Left-aligned label, massive right-aligned or bottom-aligned number. Subtle variance indicator (e.g., '+2% from yesterday').",
+    "receipt_engine": "Print-friendly A4/A5 layouts. High-contrast black and white preview. Absolute minimalist layout, mimicking physical paper. Remove shadows and sidebars when printing.",
+    "forms": "Dense input fields. Use Shadcn Input/Select. Left-aligned labels for rapid tab-key navigation. Mandatory remarks field must have a prominent red asterisk."
+  },
+  "grids": {
+    "dashboard_mode": "High Density Grid (MODE B)",
+    "kpi_row": "grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4",
+    "main_content": "grid-cols-1 lg:grid-cols-4 gap-6 (Sidebar col-span-1, Main Table col-span-3)"
+  },
+  "layouts": {
+    "app_structure": "Left Navigation Sidebar (Dark Slate) + Top Action Bar (White) + Main Content Area (Light Slate Background).",
+    "spacing_system": "Compact spacing for utility. `p-4` or `p-6` for main containers, tight `gap-2` or `gap-4` for data elements.",
+    "header": "Solid white background (`bg-white`). No transparency. Must contain Breadcrumbs and user role badge (e.g., Cashier/Admin)."
+  },
+  "motion": {
+    "philosophy": "Minimalist. Cashiers using the app 8 hours/day do not want bouncy animations.",
+    "interactions": "Instant hover states. Fast transitions (`duration-150`). No parallax or delayed entrances."
+  },
+  "accessibility": {
+    "contrast": "Strict APCA/WCAG AA compliance. Dark text on light background. No light grey text on white.",
+    "keyboard": "Full keyboard navigability. Cashiers must be able to generate receipts without touching the mouse. Visible `focus-visible:ring-2` on all inputs.",
+    "testing": "All interactive elements MUST include `data-testid` attribute (e.g., `data-testid=\"generate-receipt-button\"`)."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1635424239131-32dc44986b56?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxNzV8MHwxfHNlYXJjaHwxfHxxdWlldCUyMGVtcHR5JTIwY2xhc3Nyb29tJTIwc3VubGlnaHR8ZW58MHx8fHwxNzg1ODE5NTA3fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Quiet, sunlit empty classroom with wooden desks",
+        "category": "Login Screen Backdrop (left or right split panel)"
+      }
+    ],
+    "icons": "lucide-react. Use thin stroke weights (1.5px) for a professional look."
+  },
+  "3d_libraries": {
+    "recommendation": "NONE. This is a highly dense financial accounting software. 3D elements will distract and reduce performance. Use Recharts for 2D data visualization if needed."
+  },
+  "instructions_to_main_agent": [
+    "Prioritize data density. Do not use excessive padding inside data tables.",
+    "Implement Role-Based Access Control UI explicitly (show/hide admin menus based on role).",
+    "For the unified receipt engine, ensure the CSS is `@media print` optimized (hide sidebars, remove shadows).",
+    "Implement global search component in the top header (Search by admission no / name / mobile / receipt no).",
+    "Add `data-testid` to every single button, input, and table row.",
+    "Ensure all components are strictly written in .js files, NOT .tsx files.",
+    "OVERRIDE UNIVERSAL GLASSMORPHISM RULE: Due to the high-density financial nature of this specific app, strictly use Flat Solid Surfaces instead of Glassmorphism to ensure data legibility."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: `transition: all`. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, ie do not add `.App { text-align: center; }` in the css file. This disrupts the human natural reading flow of text.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Main agent relies on these image URLs. Missing categories (especially sponsor logos) = main agent will use placeholder text which is FORBIDDEN.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Create new components that match the style and conventions of existing components when needed.",
+    "Examine existing components to understand the project's component patterns before creating new ones.",
+    "Use `sonner` for toasts. Sonner component are located in `/app/src/components/ui/sonner.js`."
+  ]
+}
