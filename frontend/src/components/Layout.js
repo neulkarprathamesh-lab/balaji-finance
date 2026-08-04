@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen
 } from 'lucide-react';
 
 const nav = [
@@ -20,7 +20,9 @@ const nav = [
   { to: '/cancellations', label: 'Cancellations', icon: XCircle, roles: ['administrator','manager','accountant'] },
   { to: '/concessions', label: 'Concession Ledger', icon: Award, roles: ['administrator','manager','accountant'] },
   { to: '/promotion', label: 'Promotion & Rollover', icon: GraduationCap, roles: ['administrator','manager'] },
+  { to: '/assign-students', label: 'Assign Students', icon: ClipboardList, roles: ['administrator','manager','accountant'] },
   { to: '/fee-structure', label: 'Fee Structure', icon: Wallet, roles: ['administrator','manager','accountant'] },
+  { to: '/fee-brochure', label: 'Fee Brochure', icon: BookOpen, roles: ['*'] },
   { to: '/settings', label: 'Settings', icon: Settings2, roles: ['administrator'] },
   { to: '/admin', label: 'Administration', icon: Shield, roles: ['administrator'] },
 ];

@@ -1,0 +1,9 @@
+crons:
+  - name: quarterly-reminders
+    description: "Daily at 6am IST, materialize pending reminders for students who haven't paid Q1/Q2/Q3 tuition due within a week"
+    cron: "0 6 * * *"
+    timezone: "Asia/Kolkata"
+    endpoint: "{{BASE_URL}}/api/cron/quarterly-reminders"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

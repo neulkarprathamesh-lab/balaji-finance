@@ -23,6 +23,8 @@ import BusRoutes from '@/pages/BusRoutes';
 import FeeNotices from '@/pages/FeeNotices';
 import Profile from '@/pages/Profile';
 import Settings from '@/pages/Settings';
+import AssignStudents from '@/pages/AssignStudents';
+import FeeBrochure from '@/pages/FeeBrochure';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -59,6 +61,8 @@ export default function App() {
             <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<Protected roles={['administrator']}><Settings /></Protected>} />
             <Route path="fee-structure" element={<Protected roles={['administrator','manager','accountant']}><FeeStructure /></Protected>} />
+            <Route path="fee-brochure" element={<FeeBrochure />} />
+            <Route path="assign-students" element={<Protected roles={['administrator','manager','accountant']}><AssignStudents /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>
           <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />

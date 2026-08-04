@@ -312,6 +312,10 @@ async def get_settings_doc():
             "receipt_footer": "This is a computer-generated receipt.",
             "notice_footer": "Fee counter timing: 9:00 AM – 3:00 PM (Monday to Saturday). Modes accepted: Cash / Cheque / DD / UPI / NEFT.",
             "bus_annual_months": 12,
+            "q1_due_date": "2026-06-30",
+            "q2_due_date": "2026-09-30",
+            "q3_due_date": "2026-12-31",
+            "reminder_lead_days": 7,
         }
         await db.settings.insert_one(dict(doc))
     doc.pop("_id", None)
@@ -324,7 +328,7 @@ async def read_settings(user = Depends(get_current_user)):
 @api.patch("/settings")
 async def update_settings(body: Dict[str, Any], user = Depends(require_roles("administrator"))):
     await get_settings_doc()  # ensure exists
-    allowed = {k: v for k, v in body.items() if k in ("school_name","school_address","school_phone","school_email","receipt_footer","notice_footer","bus_annual_months")}
+    allowed = {k: v for k, v in body.items() if k in ("school_name","school_address","school_phone","school_email","receipt_footer","notice_footer","bus_annual_months","q1_due_date","q2_due_date","q3_due_date","reminder_lead_days")}
     await db.settings.update_one({"id": SETTINGS_ID}, {"$set": allowed})
     await audit(user, "update", "settings", SETTINGS_ID, allowed)
     return await get_settings_doc()
@@ -536,6 +540,21 @@ async def bulk_import_students(body: Dict[str, Any], user = Depends(require_role
             errors.append({"row": idx+1, "error": str(e)})
     await audit(user, "bulk_import", "student", "", {"created": created, "skipped": skipped, "errors": len(errors)})
     return {"created": created, "skipped": skipped, "errors": errors, "total": len(rows)}
+
+@api.post("/students/bulk-reassign")
+async def bulk_reassign_students(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
+    """Body: {student_ids: [], to_class_id, to_fee_structure_id?}"""
+    ids = body.get("student_ids", [])
+    to_class_id = body.get("to_class_id")
+    if not ids or not to_class_id:
+        raise HTTPException(400, "student_ids and to_class_id required")
+    to_cls = await db.classes.find_one({"id": to_class_id})
+    if not to_cls: raise HTTPException(400, "Target class not found")
+    upd: Dict[str, Any] = {"class_id": to_class_id, "department_id": to_cls["department_id"]}
+    if body.get("to_fee_structure_id"): upd["fee_structure_id"] = body["to_fee_structure_id"]
+    result = await db.students.update_many({"id": {"$in": ids}}, {"$set": upd, "$push": {"reassign_history": {"to_class_id": to_class_id, "at": now_iso(), "by": user["name"]}}})
+    await audit(user, "bulk_reassign", "student", "", {"count": result.modified_count, "to_class_id": to_class_id})
+    return {"reassigned": result.modified_count}
 
 @api.patch("/students/{sid}")
 async def update_student(sid: str, body: Dict[str,Any], user = Depends(require_roles("administrator","manager","accountant"))):
@@ -1207,6 +1226,92 @@ async def seed_data():
 @app.on_event("startup")
 async def on_startup():
     await seed_data()
+
+# ---------------- Cron: Quarterly Reminders ----------------
+async def _generate_quarterly_reminders() -> Dict[str, int]:
+    """For each active student with a fee structure containing Tuition Q1/Q2/Q3 that isn't paid,
+    create a pending reminder if we're within reminder_lead_days of the quarter's due date."""
+    settings = await get_settings_doc()
+    lead = int(settings.get("reminder_lead_days", 7) or 7)
+    quarters = [
+        ("Q1", settings.get("q1_due_date")),
+        ("Q2", settings.get("q2_due_date")),
+        ("Q3", settings.get("q3_due_date")),
+    ]
+    today = date.today()
+    quarters = [(q, d) for q, d in quarters if d]
+    if not quarters: return {"created": 0, "skipped": 0}
+
+    students = await db.students.find({"status": "active", "fee_structure_id": {"$ne": None}}, {"_id": 0}).to_list(10000)
+    if not students: return {"created": 0, "skipped": 0}
+    fs_ids = list({s.get("fee_structure_id") for s in students if s.get("fee_structure_id")})
+    fs_map = {f["id"]: f for f in await db.fee_structures.find({"id": {"$in": fs_ids}}, {"_id": 0}).to_list(500)}
+    # Existing paid quarter map: student_id -> set of paid quarters
+    sids = [s["id"] for s in students]
+    receipts = await db.receipts.find({"student_id": {"$in": sids}, "status": {"$ne": "cancelled"}, "receipt_type": {"$in": ["school", "admission"]}}, {"_id": 0}).to_list(20000)
+    paid_q: Dict[str, set] = {}
+    for r in receipts:
+        for line in r.get("lines", []):
+            nm = (line.get("fee_head_name") or "").lower()
+            for tag in ("q1", "q2", "q3"):
+                if tag in nm:
+                    paid_q.setdefault(r["student_id"], set()).add(tag.upper())
+    created, skipped = 0, 0
+    for s in students:
+        fs = fs_map.get(s["fee_structure_id"])
+        if not fs: continue
+        for q_label, q_due in quarters:
+            try:
+                due = datetime.strptime(q_due, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            # Only within lead window (either today ≤ due OR overdue up to 60 days)
+            days_to = (due - today).days
+            if days_to > lead: continue
+            if days_to < -60: continue
+            # Skip if paid
+            if q_label in paid_q.get(s["id"], set()): continue
+            # Compute amount from fee structure
+            amt = 0
+            for it in fs.get("items", []):
+                nm = (it.get("fee_head_name") or "").lower()
+                if q_label.lower() in nm: amt += float(it.get("amount", 0))
+            if amt <= 0: continue
+            # Idempotency
+            key = f"tuition-{q_label}-{q_due}"
+            exists = await db.reminders.find_one({"student_id": s["id"], "key": key})
+            if exists:
+                skipped += 1; continue
+            await db.reminders.insert_one({
+                "id": gen_id(), "key": key, "student_id": s["id"],
+                "installment_name": f"Tuition {q_label}", "amount": amt,
+                "due_date": q_due, "status": "pending",
+                "auto_generated": True, "created_at": now_iso(),
+            })
+            created += 1
+    return {"created": created, "skipped": skipped}
+
+@api.post("/cron/quarterly-reminders")
+async def cron_quarterly_reminders(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Missing auth")
+    import hmac
+    expected = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    if not expected or not hmac.compare_digest(auth[7:], expected):
+        raise HTTPException(401, "Invalid cron secret")
+    # Ack fast + run in background
+    import asyncio
+    asyncio.create_task(_generate_quarterly_reminders())
+    return {"accepted": True}
+
+@api.post("/reminders/generate-quarterly")
+async def manual_generate_quarterly(user = Depends(require_roles("administrator","manager","accountant"))):
+    """Manual trigger for admin — generates reminders synchronously and returns the count."""
+    result = await _generate_quarterly_reminders()
+    await audit(user, "generate_quarterly_reminders", "reminder", "", result)
+    return result
 
 @app.on_event("shutdown")
 async def on_shutdown():
