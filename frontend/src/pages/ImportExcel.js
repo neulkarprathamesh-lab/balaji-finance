@@ -3,181 +3,272 @@ import * as XLSX from 'xlsx';
 import api from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
 import { toast } from 'sonner';
-import { Download, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Download, Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Undo2 } from 'lucide-react';
 
-const TEMPLATE_HEADERS = ['admission_no', 'name', 'department_code', 'class_name', 'guardian_name', 'guardian_mobile', 'address', 'medium'];
-const SAMPLE_ROWS = [
-  ['BC-EP-101', 'Aarav Sharma', 'EP', 'Class 3', 'Rajesh Sharma', '9876500001', 'Butibori, Nagpur', 'English'],
-  ['BC-MP-045', 'Rohan Deshmukh', 'MP', 'Class 4', 'Prakash Deshmukh', '9876500003', 'Butibori', 'Semi-English'],
-  ['BC-JC-012', 'Anjali Kulkarni', 'JC', 'Class 12 - Science', 'Vinod Kulkarni', '9876500006', 'Butibori', 'Junior College'],
-];
-
-const BATCH_SIZE = 10;
+const KINDS = {
+  students: {
+    label: 'Students',
+    endpoint: '/students/bulk-import',
+    filename: 'balaji_students_template.xlsx',
+    required: ['admission_no', 'name', 'department_code', 'class_name'],
+    optional: ['guardian_name', 'guardian_mobile', 'address', 'medium'],
+    sample: [
+      ['BC-EP-101', 'Aarav Sharma', 'EP', 'Class 3', 'Rajesh Sharma', '9876500001', 'Butibori', 'English'],
+      ['BC-MP-045', 'Rohan Deshmukh', 'MP', 'Class 4', 'Prakash Deshmukh', '9876500003', 'Butibori', 'Semi-English'],
+    ],
+    idKeyForUndo: 'admission_no',
+  },
+  fees: {
+    label: 'Fee Structures',
+    endpoint: '/fee-structures/bulk-import',
+    filename: 'balaji_fees_template.xlsx',
+    required: ['department_code', 'class_name', 'academic_year', 'fee_head_name', 'amount'],
+    optional: [],
+    sample: [
+      ['EP', 'Class 3', '2026-27', 'Admission Fee', 8500],
+      ['EP', 'Class 3', '2026-27', 'Tuition Q1', 2900],
+      ['EP', 'Class 3', '2026-27', 'Tuition Q2', 2600],
+      ['EP', 'Class 3', '2026-27', 'Tuition Q3', 2800],
+      ['JC', 'Class 12 - Science', '2026-27', 'Tuition Fee', 10500],
+    ],
+    idKeyForUndo: null,
+  },
+};
+const BATCH = 10;
 
 export default function ImportExcel() {
+  const [kind, setKind] = useState('students');
+  const spec = KINDS[kind];
   const fileRef = useRef();
   const [rows, setRows] = useState([]);
+  const [headers, setHeaders] = useState([]);
+  const [mapping, setMapping] = useState({});
+  const [needsMapping, setNeedsMapping] = useState(false);
   const [progress, setProgress] = useState({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false });
+  const [importedIds, setImportedIds] = useState([]);
   const [filename, setFilename] = useState('');
 
+  const reset = () => { setRows([]); setHeaders([]); setMapping({}); setNeedsMapping(false); setImportedIds([]); setFilename(''); setProgress({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false }); if (fileRef.current) fileRef.current.value = ''; };
+
   const downloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...SAMPLE_ROWS]);
-    ws['!cols'] = TEMPLATE_HEADERS.map(() => ({ wch: 20 }));
+    const ws = XLSX.utils.aoa_to_sheet([[...spec.required, ...spec.optional], ...spec.sample]);
+    ws['!cols'] = [...spec.required, ...spec.optional].map(() => ({ wch: 20 }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Students');
-    XLSX.writeFile(wb, 'balaji_students_template.xlsx');
-    toast.success('Template downloaded — fill it in Excel then upload here');
+    XLSX.utils.book_append_sheet(wb, ws, spec.label);
+    XLSX.writeFile(wb, spec.filename);
+    toast.success('Template downloaded');
   };
 
+  const normalizeRows = (parsed, map) => parsed.map(r => {
+    const o = {};
+    for (const req of [...spec.required, ...spec.optional]) {
+      const src = map[req] || req;
+      o[req] = src && r[src] !== undefined ? String(r[src]).trim() : '';
+    }
+    return o;
+  }).filter(r => Object.values(r).some(v => v));
+
   const onFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const file = e.target.files?.[0]; if (!file) return;
     setFilename(file.name);
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
-    // Normalize header keys to snake_case
-    const normalized = parsed.map(r => {
-      const o = {};
-      for (const k of Object.keys(r)) o[k.trim().toLowerCase().replace(/\s+/g, '_')] = String(r[k]).trim();
-      return o;
-    }).filter(r => r.admission_no || r.name);
-    setRows(normalized);
-    setProgress({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false });
-    toast.success(`✓ Loaded ${normalized.length} rows from ${file.name}`);
+    if (!parsed.length) return toast.error('No rows found in file');
+    const detected = Object.keys(parsed[0]).map(k => k.trim());
+    setHeaders(detected);
+    // Try direct match: normalize both sides
+    const norm = (s) => s.toLowerCase().replace(/\s+|_/g, '');
+    const auto = {};
+    for (const req of [...spec.required, ...spec.optional]) {
+      const hit = detected.find(h => norm(h) === norm(req));
+      if (hit) auto[req] = hit;
+    }
+    setMapping(auto);
+    const missing = spec.required.filter(r => !auto[r]);
+    if (missing.length) {
+      setNeedsMapping(true);
+      setRows(parsed);  // raw for later re-mapping
+      toast.warning(`Column mapping needed for: ${missing.join(', ')}`);
+    } else {
+      setRows(normalizeRows(parsed, auto));
+      setNeedsMapping(false);
+      toast.success(`✓ Loaded ${parsed.length} rows from ${file.name}`);
+    }
+  };
+
+  const applyMapping = () => {
+    const missing = spec.required.filter(r => !mapping[r]);
+    if (missing.length) return toast.error(`Still missing: ${missing.join(', ')}`);
+    setRows(prev => normalizeRows(prev, mapping));
+    setNeedsMapping(false);
+    toast.success('✓ Columns mapped — ready to import');
   };
 
   const startImport = async () => {
-    if (!rows.length) return toast.error('Load an Excel file first');
+    if (!rows.length) return;
     setProgress(p => ({ ...p, running: true, finished: false }));
-    let added = 0, skipped = 0; const errs = [];
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const batch = rows.slice(i, i + BATCH_SIZE);
-      const current = batch[0]?.name || batch[0]?.admission_no || '—';
+    let added = 0, skipped = 0; const errs = []; const idsThisRun = [];
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const batch = rows.slice(i, i + BATCH);
+      const current = batch[0]?.name || batch[0]?.class_name || batch[0]?.admission_no || '—';
       setProgress(p => ({ ...p, current: `${current} (row ${i+1})`, done: i }));
       try {
-        const { data } = await api.post('/students/bulk-import', { rows: batch });
+        const { data } = await api.post(spec.endpoint, { rows: batch });
         added += data.created; skipped += data.skipped;
         for (const e of (data.errors || [])) errs.push({ ...e, row: i + e.row });
+        // Track imported keys for undo (students only)
+        if (spec.idKeyForUndo) for (const b of batch) if (b[spec.idKeyForUndo]) idsThisRun.push(b[spec.idKeyForUndo]);
       } catch (ex) {
         for (let j = 0; j < batch.length; j++) errs.push({ row: i + j + 1, error: ex?.response?.data?.detail || 'Batch failed', data: batch[j] });
       }
-      setProgress(p => ({ ...p, added, skipped, errors: errs, done: Math.min(i + BATCH_SIZE, rows.length) }));
-      await new Promise(r => setTimeout(r, 60)); // let UI paint
+      setProgress(p => ({ ...p, added, skipped, errors: errs, done: Math.min(i + BATCH, rows.length) }));
+      await new Promise(r => setTimeout(r, 60));
+    }
+    // Resolve admission_nos → student ids for undo
+    if (spec.idKeyForUndo && idsThisRun.length) {
+      const stuIds = [];
+      for (const adm of idsThisRun) {
+        try { const { data } = await api.get(`/students?q=${adm}&limit=1`); if (data[0]?.admission_no === adm) stuIds.push(data[0].id); }
+        catch {}
+      }
+      setImportedIds(stuIds);
     }
     setProgress(p => ({ ...p, running: false, finished: true, current: null, done: rows.length }));
-    toast.success(`✓ Import complete — ${added} added, ${skipped} skipped, ${errs.length} errors`);
+    toast.success(`✓ Import complete — ${added} added, ${skipped} ${kind==='fees'?'updated':'skipped'}, ${errs.length} errors`);
+  };
+
+  const undoImport = async () => {
+    if (!importedIds.length) return;
+    if (!window.confirm(`Roll back the last ${importedIds.length} imported students? Students with receipts will be kept.`)) return;
+    try {
+      const { data } = await api.post('/students/bulk-delete', { student_ids: importedIds });
+      toast.success(`✓ Deleted ${data.deleted} students · ${data.protected_with_receipts} kept (had receipts)`);
+      setImportedIds([]);
+    } catch (e) { toast.error(e?.response?.data?.detail || 'Undo failed'); }
   };
 
   const downloadErrors = () => {
     if (!progress.errors.length) return;
-    const rows = [['Row', 'Error', 'admission_no', 'name', 'department_code', 'class_name']];
-    for (const e of progress.errors) rows.push([e.row, e.error, e.data?.admission_no || '', e.data?.name || '', e.data?.department_code || '', e.data?.class_name || '']);
-    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const hdr = ['Row', 'Error', ...spec.required, ...spec.optional];
+    const out = [hdr];
+    for (const e of progress.errors) out.push([e.row, e.error, ...[...spec.required, ...spec.optional].map(k => e.data?.[k] || '')]);
+    const ws = XLSX.utils.aoa_to_sheet(out);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Errors');
     XLSX.writeFile(wb, `import_errors_${Date.now()}.xlsx`);
   };
-
-  const reset = () => { setRows([]); setFilename(''); setProgress({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false }); if (fileRef.current) fileRef.current.value = ''; };
 
   const pct = rows.length ? Math.round((progress.done / rows.length) * 100) : 0;
   const remaining = rows.length - progress.done;
 
   return (
     <>
-      <PageHeader title="Excel Import — Students" subtitle="Download the ready-made template, fill it in Excel, then upload here with live progress" />
+      <PageHeader title="Excel Import" subtitle="Download the template · fill in Excel · upload with live progress"
+        actions={
+          <div className="flex gap-1 border border-slate-300 rounded overflow-hidden no-print">
+            {Object.entries(KINDS).map(([k, v]) => (
+              <button key={k} data-testid={`imp-tab-${k}`} onClick={() => { setKind(k); reset(); }} className={`h-9 px-4 text-sm ${kind===k ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}>{v.label}</button>
+            ))}
+          </div>
+        }
+      />
       <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* Step 1: Template */}
         <div className="bg-white border border-slate-200 rounded p-5">
           <div className="text-[11px] uppercase tracking-widest text-slate-500">Step 1</div>
-          <h3 className="font-heading font-semibold text-lg mt-1">Download Template</h3>
-          <p className="text-[13px] text-slate-600 mt-2">A ready-to-fill Excel with the exact column headers we need and 3 sample rows.</p>
+          <h3 className="font-heading font-semibold text-lg mt-1">Download {spec.label} Template</h3>
+          <p className="text-[13px] text-slate-600 mt-2">Excel with exact headers and sample rows.</p>
           <button data-testid="tpl-download" onClick={downloadTemplate} className="mt-4 h-10 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-sm w-full flex items-center justify-center gap-2">
-            <Download className="w-4 h-4" /> Download Template (.xlsx)
+            <Download className="w-4 h-4" /> Download Template
           </button>
-          <div className="text-[11px] text-slate-500 mt-3">Required columns: <span className="font-mono">admission_no, name, department_code, class_name</span></div>
-          <div className="text-[11px] text-slate-500">Optional: <span className="font-mono">guardian_name, guardian_mobile, address, medium</span></div>
-          <div className="text-[11px] text-slate-500 mt-2">Dept codes: EP (English Primary) · MP (Marathi Primary) · SEC (Secondary) · JC (Junior College)</div>
+          <div className="text-[11px] text-slate-500 mt-3">Required: <span className="font-mono">{spec.required.join(', ')}</span></div>
+          {spec.optional.length > 0 && <div className="text-[11px] text-slate-500">Optional: <span className="font-mono">{spec.optional.join(', ')}</span></div>}
         </div>
 
-        {/* Step 2: Upload */}
         <div className="bg-white border border-slate-200 rounded p-5">
           <div className="text-[11px] uppercase tracking-widest text-slate-500">Step 2</div>
           <h3 className="font-heading font-semibold text-lg mt-1">Upload Filled Excel</h3>
-          <p className="text-[13px] text-slate-600 mt-2">Accepts .xlsx, .xls or .csv. Parsed instantly in your browser.</p>
+          <p className="text-[13px] text-slate-600 mt-2">.xlsx / .xls / .csv — parsed in your browser.</p>
           <label className="mt-4 h-10 px-4 border-2 border-dashed border-slate-300 hover:border-slate-500 rounded text-sm w-full flex items-center justify-center gap-2 cursor-pointer text-slate-700">
-            <Upload className="w-4 h-4" />
-            <span>{filename || 'Choose file…'}</span>
+            <Upload className="w-4 h-4" /><span>{filename || 'Choose file…'}</span>
             <input data-testid="excel-upload" ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFile} className="hidden" />
           </label>
-          {rows.length > 0 && (
-            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded text-sm">
-              <FileSpreadsheet className="w-4 h-4 inline mr-1 text-slate-500" />
-              <b>{rows.length}</b> rows detected · ready to import
+          {rows.length > 0 && !needsMapping && <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded text-sm"><FileSpreadsheet className="w-4 h-4 inline mr-1 text-slate-500" /><b>{rows.length}</b> rows ready</div>}
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded p-5">
+          <div className="text-[11px] uppercase tracking-widest text-slate-500">Step 3</div>
+          <h3 className="font-heading font-semibold text-lg mt-1">Import & Track</h3>
+          <p className="text-[13px] text-slate-600 mt-2">Batches of {BATCH} · live progress · error report.</p>
+          {!progress.finished ? (
+            <button data-testid="import-start" onClick={startImport} disabled={progress.running || !rows.length || needsMapping} className="mt-4 h-10 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded text-sm w-full flex items-center justify-center gap-2">
+              {progress.running ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span> Importing…</> : <><Upload className="w-4 h-4" /> Start Import</>}
+            </button>
+          ) : (
+            <div className="mt-4 space-y-2">
+              {importedIds.length > 0 && (
+                <button data-testid="undo-import" onClick={undoImport} className="h-10 px-4 border-2 border-red-300 text-red-700 hover:bg-red-50 rounded text-sm w-full flex items-center justify-center gap-2">
+                  <Undo2 className="w-4 h-4" /> Undo Last Import ({importedIds.length} students)
+                </button>
+              )}
+              <button data-testid="import-reset" onClick={reset} className="h-10 px-4 border border-slate-300 rounded text-sm w-full flex items-center justify-center gap-2 hover:bg-slate-50">
+                <RefreshCw className="w-4 h-4" /> Import Another File
+              </button>
             </div>
           )}
         </div>
 
-        {/* Step 3: Progress + Import */}
-        <div className="bg-white border border-slate-200 rounded p-5">
-          <div className="text-[11px] uppercase tracking-widest text-slate-500">Step 3</div>
-          <h3 className="font-heading font-semibold text-lg mt-1">Import & Track Progress</h3>
-          <p className="text-[13px] text-slate-600 mt-2">Students are added in batches of {BATCH_SIZE}. You'll see who's being processed live.</p>
-          {!progress.finished ? (
-            <button data-testid="import-start" onClick={startImport} disabled={progress.running || !rows.length} className="mt-4 h-10 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded text-sm w-full flex items-center justify-center gap-2">
-              {progress.running ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span> Importing…</> : <><Upload className="w-4 h-4" /> Start Import</>}
-            </button>
-          ) : (
-            <button data-testid="import-reset" onClick={reset} className="mt-4 h-10 px-4 border border-slate-300 rounded text-sm w-full flex items-center justify-center gap-2 hover:bg-slate-50">
-              <RefreshCw className="w-4 h-4" /> Import Another File
-            </button>
-          )}
-        </div>
+        {/* Column mapping panel */}
+        {needsMapping && (
+          <div className="lg:col-span-3 bg-amber-50 border-2 border-amber-400 rounded p-5" data-testid="mapping-panel">
+            <div className="flex items-center gap-2 mb-2"><AlertTriangle className="w-5 h-5 text-amber-700" /><h3 className="font-heading font-semibold text-amber-900">Column Mapping Needed</h3></div>
+            <p className="text-[13px] text-amber-800 mb-4">Your Excel headers don't match exactly. Match each required column to a column from your file:</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {[...spec.required, ...spec.optional].map(col => (
+                <label key={col} className="block">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-600 mb-1">
+                    {col} {spec.required.includes(col) && <span className="text-red-600">*</span>}
+                  </div>
+                  <select className="w-full h-9 px-3 border border-slate-300 rounded text-sm bg-white" value={mapping[col] || ''} onChange={e => setMapping({ ...mapping, [col]: e.target.value })}>
+                    <option value="">— skip —</option>
+                    {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </label>
+              ))}
+            </div>
+            <button data-testid="mapping-apply" onClick={applyMapping} className="mt-4 h-9 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm">Apply Mapping →</button>
+          </div>
+        )}
 
-        {/* Progress panel — spans full width */}
         {(progress.running || progress.finished) && (
           <div className="lg:col-span-3 bg-white border-2 border-blue-200 rounded p-5">
             <div className="flex items-baseline justify-between mb-3">
               <h3 className="font-heading font-semibold text-lg">{progress.finished ? '✓ Import Complete' : 'Importing…'}</h3>
               <div className="text-[13px] text-slate-500 tabular font-mono">{progress.done} / {rows.length} · {pct}%</div>
             </div>
-
-            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-4">
-              <div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-300" style={{ width: `${pct}%` }} />
-            </div>
-
+            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-4"><div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-300" style={{ width: `${pct}%` }} /></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              <Stat icon={FileSpreadsheet} label="Total in Excel" value={rows.length} tone="text-slate-900" />
-              <Stat icon={CheckCircle2} label="Added" value={progress.added} tone="text-emerald-700" />
-              <Stat icon={AlertTriangle} label="Skipped (duplicates)" value={progress.skipped} tone="text-amber-700" />
+              <Stat icon={FileSpreadsheet} label={`Total in Excel`} value={rows.length} tone="text-slate-900" />
+              <Stat icon={CheckCircle2} label={kind==='fees' ? 'Created' : 'Added'} value={progress.added} tone="text-emerald-700" />
+              <Stat icon={AlertTriangle} label={kind==='fees' ? 'Updated' : 'Skipped'} value={progress.skipped} tone="text-amber-700" />
               <Stat icon={XCircle} label="Errors" value={progress.errors.length} tone="text-red-700" />
             </div>
-
             <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
-              <div className="bg-slate-50 border border-slate-200 rounded p-3">
-                <div className="text-[10px] uppercase tracking-widest text-slate-500">Currently processing</div>
-                <div className="font-semibold text-slate-900 mt-0.5">{progress.current || (progress.finished ? '— Done —' : '…')}</div>
-              </div>
-              <div className="bg-slate-50 border border-slate-200 rounded p-3">
-                <div className="text-[10px] uppercase tracking-widest text-slate-500">Remaining</div>
-                <div className="font-heading text-xl font-semibold tabular text-slate-900">{remaining}</div>
-              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">Currently processing</div><div className="font-semibold text-slate-900 mt-0.5">{progress.current || (progress.finished ? '— Done —' : '…')}</div></div>
+              <div className="bg-slate-50 border border-slate-200 rounded p-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">Remaining</div><div className="font-heading text-xl font-semibold tabular text-slate-900">{remaining}</div></div>
             </div>
-
             {progress.errors.length > 0 && (
               <div className="border border-red-200 bg-red-50 rounded p-3 mt-3">
                 <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm text-red-800 font-semibold flex items-center gap-1.5"><XCircle className="w-4 h-4" /> {progress.errors.length} row{progress.errors.length===1?'':'s'} had errors</div>
+                  <div className="text-sm text-red-800 font-semibold flex items-center gap-1.5"><XCircle className="w-4 h-4" /> {progress.errors.length} error{progress.errors.length===1?'':'s'}</div>
                   <button data-testid="err-download" onClick={downloadErrors} className="text-xs h-8 px-3 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Download Error Report</button>
                 </div>
                 <div className="max-h-40 overflow-y-auto text-[12px] space-y-0.5">
                   {progress.errors.slice(0, 20).map((e, i) => (
-                    <div key={i} className="text-red-800"><span className="font-mono">Row {e.row}:</span> {e.error} <span className="text-red-500">— {e.data?.admission_no || ''} {e.data?.name || ''}</span></div>
+                    <div key={i} className="text-red-800"><span className="font-mono">Row {e.row}:</span> {e.error}</div>
                   ))}
-                  {progress.errors.length > 20 && <div className="text-red-600 italic mt-1">…and {progress.errors.length - 20} more — download the report to see all.</div>}
+                  {progress.errors.length > 20 && <div className="text-red-600 italic mt-1">…and {progress.errors.length - 20} more.</div>}
                 </div>
               </div>
             )}
@@ -187,13 +278,9 @@ export default function ImportExcel() {
     </>
   );
 }
-
-const Stat = ({ icon: Icon, label, value, tone }) => (
+const Stat = ({ icon:Icon, label, value, tone }) => (
   <div className="bg-white border border-slate-200 rounded p-3">
-    <div className="flex justify-between items-center mb-1">
-      <div className="text-[10px] uppercase tracking-widest text-slate-500">{label}</div>
-      <Icon className="w-4 h-4 text-slate-400" strokeWidth={1.75} />
-    </div>
+    <div className="flex justify-between items-center mb-1"><div className="text-[10px] uppercase tracking-widest text-slate-500">{label}</div><Icon className="w-4 h-4 text-slate-400" strokeWidth={1.75} /></div>
     <div className={`font-heading text-2xl font-bold tabular ${tone}`}>{value}</div>
   </div>
 );

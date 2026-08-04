@@ -535,8 +535,10 @@ async def bulk_import_students(body: Dict[str, Any], user = Depends(require_role
                 "department_id": d["id"], "class_id": cls["id"],
                 "guardian_name": r.get("guardian_name"), "guardian_mobile": str(r.get("guardian_mobile","") or ""),
                 "address": r.get("address"), "status":"active", "created_at": now_iso(),
+                "imported_at": now_iso(), "imported_by": user["id"],
             })
             created += 1
+            errors  # noop to keep linter happy
         except Exception as e:
             errors.append({"row": idx+1, "error": str(e)})
     await audit(user, "bulk_import", "student", "", {"created": created, "skipped": skipped, "errors": len(errors)})
