@@ -1,56 +1,54 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { Toaster } from 'sonner';
+import Layout from '@/components/Layout';
+import Login from '@/pages/Login';
+import Dashboard from '@/pages/Dashboard';
+import Students from '@/pages/Students';
+import StudentDetail from '@/pages/StudentDetail';
+import NewReceipt from '@/pages/NewReceipt';
+import Receipts from '@/pages/Receipts';
+import ReceiptView from '@/pages/ReceiptView';
+import Adjustments from '@/pages/Adjustments';
+import Extensions from '@/pages/Extensions';
+import Reminders from '@/pages/Reminders';
+import Reports from '@/pages/Reports';
+import FeeStructure from '@/pages/FeeStructure';
+import Admin from '@/pages/Admin';
+import '@/index.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
+const Protected = ({ children, roles }) => {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
+  return children;
 };
 
-function App() {
+export default function App() {
   return (
-    <div className="App">
+    <AuthProvider>
+      <Toaster position="top-right" richColors />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/" element={<Protected><Layout /></Protected>}>
+            <Route index element={<Dashboard />} />
+            <Route path="students" element={<Students />} />
+            <Route path="students/:id" element={<StudentDetail />} />
+            <Route path="new-receipt" element={<NewReceipt />} />
+            <Route path="receipts" element={<Receipts />} />
+            <Route path="adjustments" element={<Adjustments />} />
+            <Route path="extensions" element={<Extensions />} />
+            <Route path="reminders" element={<Reminders />} />
+            <Route path="reports" element={<Reports />} />
+            <Route path="fee-structure" element={<Protected roles={['administrator','manager','accountant']}><FeeStructure /></Protected>} />
+            <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>
+          <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />
         </Routes>
       </BrowserRouter>
-    </div>
+    </AuthProvider>
   );
 }
-
-export default App;
