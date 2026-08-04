@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
 
-const LOGO = "https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg";
+const LOGO = "/school-logo.jpeg";
 const rs = (n) => (n == null || n === '' ? '' : Number(n).toFixed(2));
 
 export default function ReceiptView() {

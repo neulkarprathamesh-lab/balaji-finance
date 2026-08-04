@@ -4,7 +4,7 @@ import axios from 'axios';
 import { QRCodeSVG } from 'qrcode.react';
 import { Printer, ArrowLeft, Shield, Info } from 'lucide-react';
 
-const LOGO = "https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg";
+const LOGO = "/school-logo.jpeg";
 const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 

@@ -3,7 +3,7 @@ import api from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
 import { Printer } from 'lucide-react';
 
-const LOGO = "https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg";
+const LOGO = "/school-logo.jpeg";
 
 export default function FeeBrochure() {
   const [structures, setStructures] = useState([]);

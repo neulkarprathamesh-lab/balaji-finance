@@ -24,7 +24,7 @@ export default function Login() {
     <div className="min-h-screen grid lg:grid-cols-2">
       <div className="hidden lg:block relative">
         <img
-          src="https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/36zpwk4s_image.png"
+          src="/login-bg.png"
           alt="Balaji Convent"
           className="w-full h-full object-cover"
         />
@@ -38,7 +38,7 @@ export default function Login() {
       <div className="flex items-center justify-center p-8 bg-white">
         <form onSubmit={submit} className="w-full max-w-sm space-y-5" data-testid="login-form">
           <div className="flex items-center gap-3 mb-2">
-            <img src="https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg" alt="logo" className="w-12 h-12 rounded-full object-cover ring-1 ring-slate-200" />
+            <img src="/school-logo.jpeg" alt="logo" className="w-12 h-12 rounded-full object-cover ring-1 ring-slate-200" />
             <div>
               <div className="font-heading font-semibold text-lg leading-tight">Balaji Convent</div>
               <div className="text-[11px] tracking-widest uppercase text-slate-500">Fee Software · v1.0</div>

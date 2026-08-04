@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/Layout';
 import { QRCodeSVG } from 'qrcode.react';
 import { Printer, Smartphone, ScanLine } from 'lucide-react';
 
-const LOGO = "https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg";
+const LOGO = "/school-logo.jpeg";
 
 const T = {
   en: {

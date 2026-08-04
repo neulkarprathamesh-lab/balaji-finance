@@ -132,6 +132,21 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 
   - Bottom status strip: "Receipt number will be generated centrally"
 - Preserved the original comprehensive form (all 9 receipt types including Bus/Voucher/Refund) at `/new-receipt-advanced` via new `NewReceiptAdvanced.js`, reachable via the header link.
+
+### 2026-02-04 (continued 5) — True offline LAN readiness
+- Downloaded the school logo and login backdrop to `frontend/public/school-logo.jpeg` and `frontend/public/login-bg.png` (previously served from an Emergent CDN URL).
+- Replaced every CDN URL in the frontend (11 files: Layout, Login, NewReceipt, ReceiptView, DayEnd, FeeSlip, StudentLookup, KioskPoster, FeeBrochure, FeeNotices, Lookup) with local paths `/school-logo.jpeg` and `/login-bg.png`. Verified via HEAD 200 + on-page screenshot.
+- Daily receipt work is now truly internet-independent — Google Fonts import remains but fails silently to system fonts if offline, and the PostHog / emergent-main scripts in index.html are async and non-blocking. The cashier flow (login → search student → allocate → print receipt → day-end) runs entirely from the Main PC via LAN.
+- Rewrote `/app/SELF_HOST_GUIDE.md` with the full LAN architecture:
+  - Network topology diagram (Main PC = single MongoDB + backend + frontend; client PCs are browsers only)
+  - Static IP setup on Windows / Ubuntu
+  - Firewall rules limited to private LAN (ports 8001, 3000) — never public
+  - MongoDB kept on `bindIp: 127.0.0.1` because backend + Mongo co-locate on the Main PC
+  - NSSM / systemd service setup for auto-start on boot
+  - Nginx config for static frontend
+  - Daily `mongodump` with rotating dual USB drives + quarterly restore drill
+  - Explicit "what runs over internet" table — every internet feature (SMS, email, off-site backup, updates) marked optional with graceful-degradation notes.
+
 - **ImportExcel.js**: uses a client-generated `batch_id` per file so undo is atomic; supports undo for **both** students and fee structures (uses the new `/bulk-delete` endpoints).
 
 ### 2026-02-04 (continued) — Follow-ups shipped

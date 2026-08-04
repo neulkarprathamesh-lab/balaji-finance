@@ -49,7 +49,7 @@ export default function Layout() {
       <aside className="w-60 bg-slate-900 text-slate-100 flex flex-col no-print">
         <div className="px-5 py-5 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
-            <img src="https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg" alt="Balaji Convent" className="w-10 h-10 rounded-full object-cover ring-1 ring-slate-700" />
+            <img src="/school-logo.jpeg" alt="Balaji Convent" className="w-10 h-10 rounded-full object-cover ring-1 ring-slate-700" />
             <div>
               <div className="font-heading font-semibold text-[15px] leading-tight">Balaji Convent</div>
               <div className="text-[11px] text-slate-400 tracking-wide">FEE MANAGEMENT</div>
