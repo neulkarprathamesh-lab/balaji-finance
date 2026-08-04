@@ -194,6 +194,8 @@ async def create_receipt(body: ReceiptIn, user = Depends(require_roles("administ
             "class_name": class_doc.get("name") if class_doc else None,
             "section": student.get("section"), "roll_no": student.get("roll_no"),
             "medium": student.get("medium"), "stream": student.get("stream"),
+            "bus_stop_no": student.get("bus_stop_no"),
+            "bus_stop_name": student.get("bus_stop_name"),
             "academic_year": student.get("academic_year") or ay,
             "fee_structure_name": (f"{fs_doc.get('medium')} · {fs_doc.get('class_name')}"
                                     + (f" · {fs_doc.get('stream')}" if fs_doc and fs_doc.get('stream') else "")) if fs_doc else None,

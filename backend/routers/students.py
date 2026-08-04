@@ -137,6 +137,20 @@ async def bulk_import_students(body: Dict[str, Any], user = Depends(require_role
                 await db.classes.insert_one(cls); all_classes.append(cls)
 
             first_year_in_college = str(r.get("first_year_in_college","")).strip().lower() in ("y","yes","true","1","new")
+            # Optional bus stop assignment (denormalised for receipts)
+            bus_stop_no = None
+            bus_stop_name = None
+            bus_stop_raw = str(r.get("bus_stop_no","")).strip()
+            if bus_stop_raw and bus_stop_raw.lower() not in ("nan","none","0"):
+                try:
+                    bus_stop_no = int(float(bus_stop_raw))
+                except Exception:
+                    errors.append({"row": idx+1, "error": f"bus_stop_no '{bus_stop_raw}' is not a number", "data": r}); continue
+                stop = await db.bus_stops.find_one({"stop_no": bus_stop_no}, {"_id": 0})
+                if not stop:
+                    errors.append({"row": idx+1, "error": f"bus_stop_no {bus_stop_no} not found in master list — seed the 2026-27 bus stops first", "data": r}); continue
+                bus_stop_name = stop.get("stop_name")
+
             fs = await resolve_fee_structure(medium, class_name, stream,
                                               first_year_in_college=first_year_in_college)
             if not fs:
@@ -152,6 +166,7 @@ async def bulk_import_students(body: Dict[str, Any], user = Depends(require_role
                 "roll_no":  (r.get("roll_no")  or r.get("roll_number") or "").strip() or None,
                 "medium": medium, "stream": stream,
                 "first_year_in_college": first_year_in_college,
+                "bus_stop_no": bus_stop_no, "bus_stop_name": bus_stop_name,
                 "department_id": dept["id"], "class_id": cls["id"],
                 "fee_structure_id": fs["id"],
                 "academic_year": (r.get("academic_year") or "2026-27").strip(),

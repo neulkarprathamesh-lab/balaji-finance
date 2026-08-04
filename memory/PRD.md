@@ -225,7 +225,25 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 16) — Student Import & Automatic Fee Structure Assignment
+## 2026-02-04 (continued 17) — Bus Stop Master + Excel Dropdown Template
+- **Bus Stop master list**: seeded 61 stops from the school's `BUS Fees stucture 2016-17 to ...` PDF into a new `bus_stops` MongoDB collection. Each row has `stop_no`, `stop_name` (transliterated to English so receipts stay ASCII-safe), `monthly_fee`, `academic_year`, `active`. Fees range ₹850 (Butibori main-town stops) to ₹1,400 (Asola Sawangi / Chimnajhari).
+- **New endpoints**:
+  - `GET /api/bus-stops` — master list, sorted by stop number
+  - `POST /api/bus-stops/seed-2026?replace=true` — admin-only re-seed from `/app/memory/bus_stops_2026.json`
+- **Student model** gains `bus_stop_no` (int) + `bus_stop_name` (denormalised for receipts). Bulk-import validates the stop number against the master and auto-fills the name.
+- **Receipt snapshot** now carries `bus_stop_no` + `bus_stop_name` so the printed receipt can display the pickup stop next to Medium / Class / Stream.
+- **Excel Template with real data-validation dropdowns**: installed `exceljs` and rewrote the Students template writer to produce a real `.xlsx` with:
+  - A hidden `Lookups` sheet holding the 3 media, 5 streams, yes/no, and all 61 bus stops.
+  - Named ranges (`MediaList`, `StreamList`, `FYList`, `BusStopList`).
+  - Cell-level `dataValidation` bound to rows 2 → 5000 for the Medium, Stream, first_year_in_college and bus_stop_no columns — so Excel shows real dropdown arrows and rejects free-text with a friendly error title.
+  - Header row styled (bold, blue background, frozen), and cell-comments explain "MANDATORY" / "leave blank if not on bus".
+- **Verified end-to-end**:
+  - Bus stops seeded (61 rows), API returns full list.
+  - Bulk-import a student with `bus_stop_no: 27` → snapshot correctly stored as `Mohgaon`.
+  - 47/47 pytest passing.
+- Distribution ZIP rebuilt.
+
+
 - **Rewrote** `fee_structure_2026.json` (41 rows) with the exact numbers from the school's 2026-27 PDF, using a new schema:
   - `medium` (English Medium / Semi Medium (Marathi) / Junior College), `class_name`, `stream`
   - `admission_fee`, `continuation_fee`, `term_fee`, `practical_fee`, `tuition_total`, `tuition_installments[]` (with due dates: 2026-08-01, 2026-10-01, 2027-01-01)

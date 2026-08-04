@@ -230,6 +230,28 @@ async def day_end_report(
     return payload
 
 # ---------- Bus Routes ----------
+@router.get("/bus-stops")
+async def list_bus_stops(user = Depends(get_current_user)):
+    """Master list of every bus stop the school picks up from — one row per receipt-visible stop."""
+    return await db.bus_stops.find({}, {"_id":0}).sort("stop_no", 1).to_list(500)
+
+@router.post("/bus-stops/seed-2026")
+async def seed_bus_stops(replace: bool = False, user = Depends(require_roles("administrator","manager"))):
+    import json as _json
+    with open("/app/memory/bus_stops_2026.json", "r") as f:
+        rows = _json.load(f)
+    if replace:
+        await db.bus_stops.delete_many({})
+    created = skipped = 0
+    for row in rows:
+        if await db.bus_stops.find_one({"stop_no": row["stop_no"]}):
+            skipped += 1; continue
+        await db.bus_stops.insert_one({"id": gen_id(), **row, "academic_year": "2026-27",
+                                        "active": True, "created_at": now_iso()})
+        created += 1
+    await audit(user, "seed", "bus_stops", "", {"created": created, "skipped": skipped, "replace": replace})
+    return {"created": created, "skipped": skipped, "total_rows": len(rows), "replaced": replace}
+
 @router.get("/bus-routes")
 async def list_bus_routes(user = Depends(get_current_user)):
     return await db.bus_routes.find({}, {"_id":0}).sort("name", 1).to_list(200)

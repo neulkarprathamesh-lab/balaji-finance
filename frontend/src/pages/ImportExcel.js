@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import api from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
 import { toast } from 'sonner';
@@ -12,13 +13,13 @@ const KINDS = {
     endpoint: '/students/bulk-import',
     filename: 'balaji_students_template.xlsx',
     required: ['admission_no', 'name', 'medium', 'class_name'],
-    optional: ['stream', 'section', 'roll_no', 'father_name', 'mother_name', 'guardian_mobile', 'academic_year', 'first_year_in_college', 'address'],
-    hint: 'Medium: English Medium / Semi Medium (Marathi) / Junior College. Stream is required only for Junior College rows.',
+    optional: ['stream', 'section', 'roll_no', 'father_name', 'mother_name', 'guardian_mobile', 'academic_year', 'first_year_in_college', 'bus_stop_no', 'address'],
+    hint: 'Medium: English Medium / Semi Medium (Marathi) / Junior College. Stream mandatory for JC. bus_stop_no is optional — use the master stop number.',
     sample: [
-      ['BC-EP-101', 'Aarav Sharma',    'English Medium',        'Class 3',  '',          'A', '11', 'Rajesh Sharma',   'Priya Sharma',    '9876500001', '2026-27', '', 'Butibori'],
-      ['BC-MP-045', 'Rohan Deshmukh',  'Semi Medium (Marathi)', 'Class 4',  '',          'B', '07', 'Prakash Deshmukh','Sunita Deshmukh', '9876500003', '2026-27', '', 'Butibori'],
-      ['BC-JC-088', 'Anjali Kulkarni', 'Junior College',        'Class 11', 'Science',   '',  '',  'Vinod Kulkarni',  'Meena Kulkarni',  '9876500006', '2026-27', 'yes', 'Butibori'],
-      ['BC-JC-089', 'Karan Joshi',     'Junior College',        'Class 12', 'Commerce',  '',  '',  'Nitin Joshi',     'Rekha Joshi',     '9876500007', '2026-27', 'no',  'Butibori'],
+      ['BC-EP-101', 'Aarav Sharma',    'English Medium',        'Class 3',  '',          'A', '11', 'Rajesh Sharma',   'Priya Sharma',    '9876500001', '2026-27', '',    12, 'Butibori'],
+      ['BC-MP-045', 'Rohan Deshmukh',  'Semi Medium (Marathi)', 'Class 4',  '',          'B', '07', 'Prakash Deshmukh','Sunita Deshmukh', '9876500003', '2026-27', '',    '',  'Butibori'],
+      ['BC-JC-088', 'Anjali Kulkarni', 'Junior College',        'Class 11', 'Science',   '',  '',  'Vinod Kulkarni',  'Meena Kulkarni',  '9876500006', '2026-27', 'yes', 27,  'Butibori'],
+      ['BC-JC-089', 'Karan Joshi',     'Junior College',        'Class 12', 'Commerce',  '',  '',  'Nitin Joshi',     'Rekha Joshi',     '9876500007', '2026-27', 'no',  '',  'Butibori'],
     ],
     idKeyForUndo: 'admission_no',
   },
@@ -52,16 +53,108 @@ export default function ImportExcel() {
   const [importedIds, setImportedIds] = useState([]);
   const [batchId, setBatchId] = useState(null);
   const [filename, setFilename] = useState('');
+  const [busStops, setBusStops] = useState([]);
+  useEffect(() => {
+    api.get('/bus-stops').then(r => setBusStops(r.data || [])).catch(() => {});
+  }, []);
 
   const reset = () => { setRows([]); setHeaders([]); setMapping({}); setNeedsMapping(false); setImportedIds([]); setBatchId(null); setFilename(''); setProgress({ done: 0, added: 0, skipped: 0, errors: [], current: null, running: false, finished: false }); if (fileRef.current) fileRef.current.value = ''; };
 
-  const downloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([[...spec.required, ...spec.optional], ...spec.sample]);
-    ws['!cols'] = [...spec.required, ...spec.optional].map(() => ({ wch: 20 }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, spec.label);
-    XLSX.writeFile(wb, spec.filename);
-    toast.success('Template downloaded');
+  const downloadTemplate = async () => {
+    if (kind !== 'students') {
+      const ws = XLSX.utils.aoa_to_sheet([[...spec.required, ...spec.optional], ...spec.sample]);
+      ws['!cols'] = [...spec.required, ...spec.optional].map(() => ({ wch: 20 }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, spec.label);
+      XLSX.writeFile(wb, spec.filename);
+      toast.success('Template downloaded');
+      return;
+    }
+
+    // Rich Excel with real dropdown data-validation for Medium / Stream / bus_stop_no
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Balaji Convent Fee Software';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('Students', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const columns = [...spec.required, ...spec.optional];
+    ws.columns = columns.map(c => ({ header: c, key: c, width: c.length > 14 ? c.length + 4 : 18 }));
+    // Header styling
+    ws.getRow(1).eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    ws.getRow(1).height = 22;
+    // Sample rows
+    for (const row of spec.sample) ws.addRow(row);
+
+    // ---- Lookups sheet ----
+    const lk = wb.addWorksheet('Lookups', { state: 'visible' });
+    lk.columns = [
+      { header: 'Medium',     key: 'medium',   width: 26 },
+      { header: 'Stream',     key: 'stream',   width: 16 },
+      { header: 'FirstYear',  key: 'fy',       width: 12 },
+      { header: 'BusStopNo',  key: 'stop_no',  width: 12 },
+      { header: 'BusStopName',key: 'stop_name',width: 40 },
+    ];
+    lk.getRow(1).font = { bold: true };
+    const mediumOptions = ['English Medium', 'Semi Medium (Marathi)', 'Junior College'];
+    const streamOptions = ['Arts', 'Commerce', 'Science', 'Electronics', 'Fisheries'];
+    const fyOptions     = ['yes', 'no'];
+    const stopRows = busStops.length ? busStops : [{ stop_no: '', stop_name: '(load bus stops via Admin → Bus Routes → Seed 2026-27)' }];
+    const maxRows = Math.max(mediumOptions.length, streamOptions.length, fyOptions.length, stopRows.length);
+    for (let i = 0; i < maxRows; i++) {
+      lk.addRow({
+        medium:    mediumOptions[i] || null,
+        stream:    streamOptions[i] || null,
+        fy:        fyOptions[i] || null,
+        stop_no:   stopRows[i]?.stop_no ?? null,
+        stop_name: stopRows[i]?.stop_name ?? null,
+      });
+    }
+
+    // Named ranges (auto-adjust with the row counts above)
+    wb.definedNames.add(`Lookups!$A$2:$A$${mediumOptions.length + 1}`, 'MediaList');
+    wb.definedNames.add(`Lookups!$B$2:$B$${streamOptions.length + 1}`, 'StreamList');
+    wb.definedNames.add(`Lookups!$C$2:$C$${fyOptions.length + 1}`, 'FYList');
+    if (stopRows.length && stopRows[0]?.stop_no !== '') {
+      wb.definedNames.add(`Lookups!$D$2:$D$${stopRows.length + 1}`, 'BusStopList');
+    }
+
+    // ---- Attach data validations ----
+    const colLetter = (idx) => String.fromCharCode(65 + idx);   // 0→A
+    const idxOf = (n) => columns.indexOf(n);
+    const attach = (colName, formula, opts = {}) => {
+      const i = idxOf(colName);
+      if (i < 0) return;
+      const L = colLetter(i);
+      // Apply to rows 2 through 5000
+      for (let r = 2; r <= 5000; r++) {
+        ws.getCell(`${L}${r}`).dataValidation = { type: 'list', allowBlank: opts.allowBlank !== false, formulae: [formula], showErrorMessage: true, errorTitle: 'Invalid value', error: opts.error || 'Please pick from the dropdown list' };
+      }
+    };
+    attach('medium', '=MediaList',  { allowBlank: false, error: 'Choose English Medium / Semi Medium (Marathi) / Junior College' });
+    attach('stream', '=StreamList', { allowBlank: true,  error: 'Choose Arts, Commerce, Science, Electronics or Fisheries' });
+    attach('first_year_in_college', '=FYList', { allowBlank: true });
+    if (stopRows.length && stopRows[0]?.stop_no !== '') {
+      attach('bus_stop_no', '=BusStopList', { allowBlank: true, error: 'Pick a stop number from the master list' });
+    }
+
+    // Instructions comment on header cells
+    ws.getCell('C1').note = 'MANDATORY. Pick from dropdown.';
+    ws.getCell('D1').note = 'MANDATORY. Use "Class 1..10", "K.G. I/II", "Nursery", "Class 11/12".';
+    if (idxOf('stream') >= 0) ws.getCell(`${colLetter(idxOf('stream'))}1`).note = 'MANDATORY for Junior College rows. Leave blank otherwise.';
+    if (idxOf('bus_stop_no') >= 0) ws.getCell(`${colLetter(idxOf('bus_stop_no'))}1`).note = 'Pick a stop from the master list; leave blank if the student is not on the bus.';
+
+    // Save
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = spec.filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    toast.success(`Template downloaded with ${stopRows.length && stopRows[0]?.stop_no !== '' ? stopRows.length : 0} bus stops in the dropdown`);
   };
 
   const normalizeRows = (parsed, map) => parsed.map(r => {

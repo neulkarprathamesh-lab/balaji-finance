@@ -35,7 +35,7 @@ BACKUP_RETENTION = 30   # keep the most-recent N backups automatically
 SETTINGS_ID = "school_settings"
 CONFIG_COLLECTIONS = [
     "receipt_types", "departments", "classes", "fee_heads", "fee_structures",
-    "settings", "bus_routes",
+    "settings", "bus_routes", "bus_stops",
 ]
 
 # ---------------- Medium & class canonicalisation ----------------
@@ -326,6 +326,8 @@ class StudentIn(BaseModel):
     address: Optional[str] = None
     fee_structure_id: Optional[str] = None
     bus_route: Optional[str] = None
+    bus_stop_no: Optional[int] = None       # links to bus_stops master list
+    bus_stop_name: Optional[str] = None     # denormalised for the receipt
     admission_category: Optional[str] = None
     admission_date: Optional[str] = None
     medium: Optional[str] = None            # canonical: English Medium / Semi Medium (Marathi) / Junior College
