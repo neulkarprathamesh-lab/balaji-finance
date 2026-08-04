@@ -225,5 +225,17 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-- **P2** — Persist an "Amount Paying" preset value from the last unpaid quarter for one-click collect
-- **P2** — Attach fee-structure preview (first 3 rows) inside the mapping panel before import
+## 2026-02-04 (continued 11) — Publish stabilization pass
+- **Fixed** critical backend crash: `server.py:1108` had a docstring on the same line as `async def reseed_receipt_types(...):` causing `IndentationError` on line 1109. Restored newline; backend now starts cleanly and `/api/version` returns 200.
+- **Fixed** frontend `/reports` crash: `Reports.js:20` called undefined `load()` — renamed to existing `run()`. Page now renders KPI cards + filters without tripping the error boundary.
+- **Added** route alias `/dashboard → /` (Navigate) so bookmarks/deep-links don't render an empty Layout shell.
+- **Fixed** React hydration warnings on `Finance.js` and `DayEnd.js` `<select><option>` children — pre-composed labels into single template-literal expressions so the visual-editor no longer injects `<span data-ve-dynamic>` wrappers inside `<option>`.
+- **Verified** by testing_agent iteration_4: 47/47 backend pytest passing (`backend_test.py`, `test_stabilization.py`, `test_undefined_var_fixes.py`), 23/23 authenticated frontend routes rendered clean, RBAC verified for all 4 roles, kiosk public routes render without auth, all offline assets return HTTP 200. Admin PIN in this environment is now `1234`.
+- **Confirmed** Sequence Reset (dual-auth) + Print Preview overlay + Test Print (TEST COPY watermark) that were left in-progress by the previous fork are all wired end-to-end and passing tests.
+
+## Publish Status
+- **Backend**: 100% — 47 pytest passing, no critical/minor issues open.
+- **Frontend**: 100% authenticated routes render clean.
+- **Offline LAN**: verified — no CDN dependencies on the daily flow.
+- **Distribution ZIP**: `/downloads/BalajiConventFeeSoftware-v1.0.zip` published from Admin → Install Package.
+

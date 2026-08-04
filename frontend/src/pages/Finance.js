@@ -80,7 +80,7 @@ export default function Finance() {
               <div className="relative">
                 <Building2 className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                 <select data-testid="dv-dept" value={department} onChange={e=>setDepartment(e.target.value)} className="w-full h-10 pl-10 pr-3 border border-slate-300 rounded bg-white">
-                  {departments.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
+                  {departments.map(d => <option key={d.id} value={d.id}>{`${d.name} (${d.code})`}</option>)}
                 </select>
               </div>
             </Field>

@@ -89,6 +89,7 @@ export default function App() {
             <Route path="import-excel" element={<Protected roles={['administrator','manager','accountant']}><ImportExcel /></Protected>} />
             <Route path="imports-history" element={<Protected roles={['administrator','manager','accountant']}><ImportsHistory /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
+            <Route path="dashboard" element={<Navigate to="/" replace />} />
           </Route>
           <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />
           <Route path="/lookup/:number" element={<Lookup />} />

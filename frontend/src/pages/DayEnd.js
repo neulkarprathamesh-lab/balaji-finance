@@ -63,7 +63,7 @@ export default function DayEnd() {
               <div className="text-[11px] uppercase tracking-widest text-slate-600 mb-1">Cashier</div>
               <select data-testid="de-cashier" value={cashierId} onChange={e=>setCashierId(e.target.value)} className="h-9 px-3 border border-slate-300 rounded text-sm bg-white min-w-[240px]">
                 <option value="">All cashiers (consolidated)</option>
-                {cashiers.map(c => <option key={c.id} value={c.id}>{c.name} · {c.role}</option>)}
+                {cashiers.map(c => <option key={c.id} value={c.id}>{`${c.name} · ${c.role}`}</option>)}
               </select>
             </div>
           )}
