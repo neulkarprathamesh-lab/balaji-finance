@@ -172,6 +172,13 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Added an **Install Package** tab in the Administration screen with green download button, contents preview, and install-order callout.
 
 - **Import History** page (`/imports-history`) — lists every batch with When / Kind / Imported By / Created / Updated-Skipped / Errors / Status / one-click Undo per row. Undone batches show a red pill and who undid them.
+
+### 2026-02-04 (continued 7) — 4 new features
+- **Cash-Denomination Sheet** — In `/day-end`, an inline table lets cashiers enter counts for ₹500/₹200/₹100/₹50/₹20/₹10/₹5/₹2/₹1. Live subtotals + a *Counted Cash* row + a big status card that computes *Expected Cash* (from the Cash mode total) vs *Counted Cash* → shows **Match** (green) or **Excess / Short** (red) with the exact ₹ difference and a "safe to hand over" / "recount before handover" recommendation.
+- **PWA Manifest** — Proper `public/manifest.json` (name, icons, theme_color `#0f172a`, standalone display). `index.html` now links `manifest.json` + `icon` + `apple-touch-icon` + a real page title "Balaji Convent Fee Software". Client PCs that Chrome/Edge → *Install app* now get a real desktop icon with the school logo.
+- **Setup Wizard** at `/setup-wizard` (admin-only nav item) — 8-step checklist (change admin password, school info, staff logins, static IP, seed fees, backups, client-PC shortcut, first receipt) with progress bar, LocalStorage persistence, and one-click CTA to the relevant page.
+- **Signed Update Feed** — `public/downloads/version.json` is fetched on every layout mount. If `version !== CURRENT_VERSION` (constant `1.0.0` in Layout.js), an amber banner appears for administrators with the version, release date, notes, a **Download** button and a **Dismiss** action (dismissal stored in LocalStorage per-version so it reappears on the next release).
+
 - **Amount Suggestions**: On student load, `Amount Paying` pre-fills with the top-priority pending head's outstanding, and a "Next Quarter" chip refills it any time.
 - **Sibling Split**: When the loaded student has siblings on the same guardian mobile, an amber banner appears ("N sibling(s) on same guardian mobile — <Names>") with an "Include siblings in one payment" toggle. When on, all siblings' pending heads merge into one priority-sorted list, and each row is tagged with the student name. Submit creates **one receipt per student** in a single flow, with a family split preview in the right rail.
 - New backend endpoints: `GET /api/students/{id}/siblings`, `GET /api/imports/history`. Both used exclusively by the new UI.

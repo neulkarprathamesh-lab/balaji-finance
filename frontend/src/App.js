@@ -32,6 +32,7 @@ import KioskPoster from '@/pages/KioskPoster';
 import StudentLookup from '@/pages/StudentLookup';
 import FeeSlip from '@/pages/FeeSlip';
 import DayEnd from '@/pages/DayEnd';
+import SetupWizard from '@/pages/SetupWizard';
 import ImportExcel from '@/pages/ImportExcel';
 import ImportsHistory from '@/pages/ImportsHistory';
 import LockScreen from '@/components/LockScreen';
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="reminders" element={<Reminders />} />
             <Route path="reports" element={<Reports />} />
             <Route path="day-end" element={<DayEnd />} />
+            <Route path="setup-wizard" element={<SetupWizard />} />
             <Route path="defaulters" element={<Defaulters />} />
             <Route path="cancellations" element={<Protected roles={['administrator','manager','accountant']}><Cancellations /></Protected>} />
             <Route path="concessions" element={<Protected roles={['administrator','manager','accountant']}><Concessions /></Protected>} />

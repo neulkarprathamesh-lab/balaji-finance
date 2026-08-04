@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import api from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
 import { useAuth } from '@/context/AuthContext';
-import { Printer, RefreshCw, CalendarDays, Wallet, User as UserIcon, TrendingUp, TrendingDown, Receipt, XCircle, Banknote, Smartphone, CreditCard } from 'lucide-react';
+import { Printer, RefreshCw, CalendarDays, Wallet, User as UserIcon, TrendingUp, TrendingDown, Receipt, XCircle, Banknote, Smartphone, CreditCard, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 const todayISO = () => new Date().toISOString().slice(0,10);
 const MODE_LABEL = { cash: 'Cash', upi: 'UPI', card: 'Card', cheque: 'Cheque', dd: 'DD', neft: 'NEFT', other: 'Other' };
 const MODE_ICON = { cash: Banknote, upi: Smartphone, card: CreditCard };
+const DENOMS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
 
 export default function DayEnd() {
   const { user } = useAuth();
@@ -15,6 +16,7 @@ export default function DayEnd() {
   const [cashiers, setCashiers] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [counts, setCounts] = useState({}); // denomination -> count
   const isAdmin = ['administrator','manager','accountant'].includes(user?.role);
 
   useEffect(() => {
@@ -114,6 +116,9 @@ export default function DayEnd() {
                   <div className="font-heading font-bold text-3xl tabular text-slate-900 mt-1" data-testid="de-net">{inr(data.net || 0)}</div>
                 </div>
               </div>
+
+              {/* Cash Denomination Sheet */}
+              <CashDenominationSheet expected={Number(data.by_mode?.find(m => m.mode === 'cash')?.amount || 0)} counts={counts} setCounts={setCounts} />
 
               {/* By mode */}
               <div>
@@ -230,3 +235,66 @@ const Stat = ({ label, value, icon: Icon, tone = 'text-slate-900', small = false
     <div className={`font-heading font-semibold tabular ${small ? 'text-sm' : 'text-xl'} ${tone} mt-0.5`}>{value}</div>
   </div>
 );
+
+const CashDenominationSheet = ({ expected, counts, setCounts }) => {
+  const counted = DENOMS.reduce((s, d) => s + d * (Number(counts[d]) || 0), 0);
+  const diff = counted - expected;
+  const zero = counted === 0;
+  const match = !zero && Math.abs(diff) < 0.01;
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-widest text-slate-600 font-bold mb-2 flex items-center gap-2">
+        <Banknote className="w-3.5 h-3.5" /> Cash Denomination Sheet
+        <span className="text-[10px] text-slate-400 normal-case">Count each note/coin before closing the till</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="md:col-span-2 border border-slate-200 rounded-lg p-3 bg-white">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[10px] uppercase text-slate-500 border-b border-slate-200">
+                <th className="py-1.5">Denomination</th>
+                <th className="py-1.5 text-center">Count</th>
+                <th className="py-1.5 text-right">Subtotal (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DENOMS.map(d => {
+                const c = counts[d] || '';
+                const sub = d * (Number(c) || 0);
+                return (
+                  <tr key={d} className="border-b border-slate-100 last:border-0">
+                    <td className="py-1.5 font-mono text-slate-700">₹ {d}</td>
+                    <td className="py-1.5 text-center">
+                      <input data-testid={`de-denom-${d}`} type="number" min="0" step="1" value={c}
+                        onChange={e => setCounts({ ...counts, [d]: e.target.value })}
+                        className="h-8 w-24 px-2 border border-slate-300 rounded text-center font-mono text-sm bg-white" />
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular text-slate-700">{sub.toFixed(0)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="bg-slate-50 font-semibold">
+                <td className="py-2">Counted Cash</td>
+                <td></td>
+                <td className="py-2 text-right font-mono text-lg tabular" data-testid="de-counted">{inr(counted)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className={`border-2 rounded-lg p-4 flex flex-col justify-between ${match ? 'border-emerald-500 bg-emerald-50' : diff !== 0 && !zero ? 'border-red-500 bg-red-50' : 'border-slate-300 bg-slate-50'}`}>
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-600">Expected Cash</div>
+            <div className="font-heading font-bold text-xl tabular">{inr(expected)}</div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-600 mt-3">Counted Cash</div>
+            <div className="font-heading font-bold text-xl tabular">{inr(counted)}</div>
+            <div className={`text-[10px] uppercase tracking-widest mt-3 ${match ? 'text-emerald-800' : diff !== 0 && !zero ? 'text-red-800' : 'text-slate-600'}`}>{diff === 0 && !zero ? 'Match' : diff > 0 ? 'Excess in Till' : diff < 0 ? 'Short in Till' : 'Enter counts →'}</div>
+            <div className={`font-heading font-bold text-3xl tabular ${match ? 'text-emerald-700' : diff !== 0 && !zero ? 'text-red-700' : 'text-slate-900'}`} data-testid="de-diff">{zero ? '—' : (diff > 0 ? '+' : '') + inr(diff)}</div>
+          </div>
+          <div className={`mt-3 rounded p-2 flex items-center gap-1.5 text-[11px] ${match ? 'bg-emerald-100 text-emerald-800' : diff !== 0 && !zero ? 'bg-red-100 text-red-800' : 'bg-white text-slate-500'}`}>
+            {match ? <><CheckCircle2 className="w-4 h-4" /> Till reconciles — safe to hand over</> : diff !== 0 && !zero ? <><AlertTriangle className="w-4 h-4" /> Discrepancy — recount before handover</> : <>Fill in counts to auto-reconcile</>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

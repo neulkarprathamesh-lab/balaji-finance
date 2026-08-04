@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+
+const CURRENT_VERSION = '1.0.0';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen, Sunset
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen, Sunset, Rocket
 } from 'lucide-react';
 
 const nav = [
@@ -41,11 +43,28 @@ const roleColors = {
 export default function Layout() {
   const { user, logout, lock } = useAuth();
   const navigate = useNavigate();
+  const [update, setUpdate] = useState(null);
+
+  useEffect(() => {
+    if (localStorage.getItem('bc.update.dismiss') === CURRENT_VERSION) return;
+    fetch('/downloads/version.json?_=' + Date.now()).then(r => r.json()).then(v => {
+      if (v?.version && v.version !== CURRENT_VERSION) setUpdate(v);
+    }).catch(() => {});
+  }, []);
+  const dismissUpdate = () => { localStorage.setItem('bc.update.dismiss', CURRENT_VERSION); setUpdate(null); };
 
   const visible = nav.filter(n => n.roles.includes('*') || n.roles.includes(user?.role));
 
   return (
     <div className="min-h-screen flex bg-slate-50">
+      {update && user?.role === 'administrator' && (
+        <div data-testid="update-banner" className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-slate-900 px-4 py-2 flex items-center justify-center gap-3 text-[12px] no-print">
+          <Rocket className="w-4 h-4" />
+          <span><b>New version {update.version} available</b> — released {new Date(update.published_at).toLocaleDateString('en-IN')}. {update.notes}</span>
+          <a href={update.download_url} download className="ml-2 h-7 px-3 bg-slate-900 text-white rounded text-[11px] font-semibold hover:bg-slate-800">Download</a>
+          <button data-testid="update-dismiss" onClick={dismissUpdate} className="h-7 px-2 text-slate-700 hover:text-slate-900 text-[11px]">Dismiss</button>
+        </div>
+      )}
       <aside className="w-60 bg-slate-900 text-slate-100 flex flex-col no-print">
         <div className="px-5 py-5 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
