@@ -27,7 +27,7 @@ export default function Admin() {
       <PageHeader title="Administration" subtitle="Users · audit log · settings" />
       <div className="p-6 space-y-4">
         <div className="flex gap-2 border-b border-slate-200">
-          {[['users','Users'],['audit','Audit Log']].map(([k,l]) => (
+          {[['users','Users'],['audit','Audit Log'],['install','Install Package']].map(([k,l]) => (
             <button key={k} onClick={()=>setTab(k)} className={`px-4 py-2 text-sm border-b-2 ${tab===k?'border-blue-600 text-blue-700 font-medium':'border-transparent text-slate-600'}`}>{l}</button>
           ))}
         </div>
@@ -63,6 +63,45 @@ export default function Admin() {
             </table>
           </div>
         </>}
+
+        {tab==='install' && (
+          <div className="bg-white border border-slate-200 rounded-lg p-6 max-w-3xl">
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-lg bg-slate-900 text-white flex items-center justify-center flex-shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </div>
+              <div className="flex-1">
+                <div className="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Self-Host Distribution</div>
+                <h3 className="font-heading font-semibold text-xl text-slate-900 leading-tight mt-0.5">Balaji Convent Fee Software — Complete Install Package (v1.0)</h3>
+                <p className="text-sm text-slate-600 mt-2">A single ZIP with everything to install and maintain the software on your school's LAN — Windows installers, complete source, database + services setup, Excel templates, role-based manuals, printer setup, backup guide, and optional SMS/email configuration.</p>
+                <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-[12px] text-slate-700">
+                  <div>▪ <b>START_HERE.md</b> — install order</div>
+                  <div>▪ Windows installer for Main PC</div>
+                  <div>▪ Client PC (cashier) installer</div>
+                  <div>▪ Full source (backend + frontend)</div>
+                  <div>▪ MongoDB + service setup</div>
+                  <div>▪ Excel import templates (2)</div>
+                  <div>▪ User manuals (4 roles)</div>
+                  <div>▪ LAN network guide</div>
+                  <div>▪ Printer setup instructions</div>
+                  <div>▪ Backup & restore drill</div>
+                  <div>▪ SMS / email config (optional)</div>
+                  <div>▪ Default admin day-one checklist</div>
+                </div>
+                <div className="mt-5 flex items-center gap-3">
+                  <a data-testid="admin-download-zip" href="/downloads/BalajiConventFeeSoftware-v1.0.zip" download className="h-11 px-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-2 shadow-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download ZIP (1.6 MB)
+                  </a>
+                  <div className="text-[11px] text-slate-500">Version 1.0 · offline-ready · start by reading <code className="font-mono">START_HERE.md</code></div>
+                </div>
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded text-[12px] text-amber-900">
+                  <b>Install order (critical):</b> 1) Main Server PC first → 2) verify database + backend → 3) install client shortcut on every cashier / office PC → 4) set up printer → 5) schedule daily backup → 6) (optional) enable SMS/email.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {tab==='audit' && (
           <div className="bg-white border border-slate-200 rounded overflow-hidden">

@@ -151,6 +151,26 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 
 ### 2026-02-04 (continued) — Follow-ups shipped
 - **A4 Print Parity**: FeeReceipt now opens with a navy brand band that mirrors the cashier UI header ("Balaji Convent · School Receipt Manager / OFFICIAL FEE RECEIPT" + receipt no + date on the right).
+
+### 2026-02-04 (continued 6) — Complete self-host distribution package
+- Built `BalajiConventFeeSoftware-v1.0.zip` (1.6 MB, 168 files) — one-click download from **Administration → Install Package** tab.
+- Package contents:
+  - `START_HERE.md` — install order + golden rules
+  - `01-install-main-server/` — Windows one-click `install-main-server.bat` (winget-installs MongoDB, Python, Node, NSSM, Yarn, then copies source + creates .env + builds frontend) + `register-services.bat` (NSSM auto-start on boot)
+  - `02-install-client-pc/` — `install-client-pc.bat` — creates Chrome/Edge PWA shortcut pointing at the Main PC's LAN IP (no software install)
+  - `03-source-code/` — full backend + frontend source (`.venv`, `node_modules`, `build`, `.env` excluded; `.env.example` templates included)
+  - `04-database/README.md` — Mongo collections, seeding, indexes, manual queries
+  - `05-services/` — `nginx.conf`, `balaji-backend.service`, `balaji-frontend.service` (systemd) + README
+  - `06-excel-templates/` — `students-template.csv`, `fee-structures-template.csv` + usage README
+  - `07-user-manuals/` — Cashier / Accountant / Manager / Administrator (4 role-specific plain-English guides)
+  - `08-lan-installation/README.md` — the SELF_HOST_GUIDE with topology diagram, static IP, firewall, MongoDB LAN binding
+  - `09-printer-setup/README.md` — A4 laser, colour, and thermal 80mm setups + common issues
+  - `10-backup-restore/README.md` — daily `mongodump`, dual-USB rotation, quarterly restore drill, emergency restore steps
+  - `11-optional-services/README.md` — Twilio/MSG91 SMS, Resend/SMTP email, off-site backup — all optional and graceful-degrade
+  - `12-default-admin/README.md` — day-one checklist, JWT rotation, password recovery via env
+- Published at `/downloads/BalajiConventFeeSoftware-v1.0.zip` (verified HTTP 200, 1.64 MB).
+- Added an **Install Package** tab in the Administration screen with green download button, contents preview, and install-order callout.
+
 - **Import History** page (`/imports-history`) — lists every batch with When / Kind / Imported By / Created / Updated-Skipped / Errors / Status / one-click Undo per row. Undone batches show a red pill and who undid them.
 - **Amount Suggestions**: On student load, `Amount Paying` pre-fills with the top-priority pending head's outstanding, and a "Next Quarter" chip refills it any time.
 - **Sibling Split**: When the loaded student has siblings on the same guardian mobile, an amber banner appears ("N sibling(s) on same guardian mobile — <Names>") with an "Include siblings in one payment" toggle. When on, all siblings' pending heads merge into one priority-sorted list, and each row is tagged with the student name. Submit creates **one receipt per student** in a single flow, with a family split preview in the right rail.
