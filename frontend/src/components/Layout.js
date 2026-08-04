@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import axios from 'axios';
+
+const API = process.env.REACT_APP_BACKEND_URL;
 
 const CURRENT_VERSION = '1.0.0';
 import {
@@ -46,6 +49,7 @@ export default function Layout() {
   const { user, logout, lock } = useAuth();
   const navigate = useNavigate();
   const [update, setUpdate] = useState(null);
+  const [diagFail, setDiagFail] = useState(0);   // count of failing server-side checks; drives red badge
 
   useEffect(() => {
     if (localStorage.getItem('bc.update.dismiss') === CURRENT_VERSION) return;
@@ -54,6 +58,26 @@ export default function Layout() {
     }).catch(() => {});
   }, []);
   const dismissUpdate = () => { localStorage.setItem('bc.update.dismiss', CURRENT_VERSION); setUpdate(null); };
+
+  // Poll diagnostics summary in the background so a red badge appears on the sidebar
+  // whenever any server-side check turns red — without the user needing to open the page.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const r = await axios.get(`${API}/api/diagnostics`);
+        if (cancelled) return;
+        const fails = (r.data?.server_side_checks || []).filter(c => !c.ok).length;
+        setDiagFail(fails);
+      } catch {
+        if (!cancelled) setDiagFail(1); // reaching the endpoint failed → Main Server issue
+      }
+    };
+    run();
+    const t = setInterval(run, 5 * 60 * 1000);   // every 5 minutes
+    return () => { cancelled = true; clearInterval(t); };
+  }, [user]);
 
   const visible = nav.filter(n => n.roles.includes('*') || n.roles.includes(user?.role));
 
@@ -91,7 +115,16 @@ export default function Layout() {
               }
             >
               <item.icon className="w-4 h-4" strokeWidth={1.75} />
-              <span>{item.label}</span>
+              <span className="flex-1">{item.label}</span>
+              {item.to === '/diagnostics' && diagFail > 0 && (
+                <span
+                  data-testid="nav-diagnostics-badge"
+                  title={`${diagFail} diagnostic check${diagFail > 1 ? 's' : ''} failing`}
+                  className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-rose-500 text-white animate-pulse"
+                >
+                  {diagFail}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>

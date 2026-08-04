@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api", tags=["config_io"])
 @router.post("/config/backup")
 async def create_manual_backup(user = Depends(require_admin_pin)):
     m = await _create_backup_zip("manual", user["name"])
-    await audit(user, "backup_create", "system", m["id"], {"kind": m["kind"], "size": m["size"]})
+    await audit(user, "backup_create", "system", m["id"], {"kind": m["kind"], "size": m["size"], "rotated_out": m.get("rotated_out", [])})
     return {k:v for k,v in m.items() if k != "_id"}
 
 @router.get("/config/backups")

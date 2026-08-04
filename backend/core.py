@@ -31,6 +31,7 @@ JWT_ALGO = 'HS256'
 ACCESS_MIN = 60 * 12  # 12h for LAN use
 
 BACKUP_DIR = Path("/app/backups")
+BACKUP_RETENTION = 30   # keep the most-recent N backups automatically
 SETTINGS_ID = "school_settings"
 CONFIG_COLLECTIONS = [
     "receipt_types", "departments", "classes", "fee_heads", "fee_structures",
@@ -420,7 +421,30 @@ async def _create_backup_zip(kind: str, actor_name: str) -> Dict[str, Any]:
     manifest["path"] = str(path)
     manifest["checksum_sha256"] = hasher.hexdigest()
     await db.backups.insert_one(manifest.copy())
+    # Auto-rotation: keep the most-recent BACKUP_RETENTION zips, drop the older ones.
+    rotated = await _rotate_backups()
+    if rotated:
+        manifest["rotated_out"] = rotated
     return manifest
+
+async def _rotate_backups() -> List[str]:
+    """Delete every backup zip beyond the most-recent BACKUP_RETENTION, both on disk and in `backups` collection.
+    Returns the list of filenames that were dropped so callers can log them."""
+    all_backups = await db.backups.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    if len(all_backups) <= BACKUP_RETENTION:
+        return []
+    to_drop = all_backups[BACKUP_RETENTION:]
+    dropped: List[str] = []
+    for b in to_drop:
+        p = Path(b.get("path", "") or "")
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass  # missing file is fine; we still drop the DB row
+        await db.backups.delete_one({"id": b["id"]})
+        dropped.append(b.get("filename", b.get("id", "")))
+    return dropped
 
 # ---------------- Startup seed ----------------
 async def seed_data():

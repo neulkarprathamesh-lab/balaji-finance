@@ -225,7 +225,16 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 13) — System Diagnostics tool
+## 2026-02-04 (continued 14) — Sidebar Fail Badge + Auto Backup Rotation
+- **Auto Notify on Fail**: `Layout.js` now polls `GET /api/diagnostics` on mount and every 5 minutes; whenever ≥1 server-side check fails, a pulsing red badge with the failure count appears on the "System Diagnostics" sidebar row (`data-testid="nav-diagnostics-badge"`). If the endpoint itself is unreachable, the badge still lights up (Main Server issue). No polling in the login screen.
+- **Auto Backup Rotation**: `core.py` now defines `BACKUP_RETENTION = 30` and a new `_rotate_backups()` coroutine that runs immediately after every successful `_create_backup_zip(...)`. Backups beyond the newest 30 are dropped from both the `backups` collection and the disk. Rotated filenames are returned in the manifest (`rotated_out`) and logged in the audit trail.
+- **Verified**:
+  - Rotation seeded 35 total backups → after rotation exactly 30 remain (`PASS: rotation enforces BACKUP_RETENTION=30`).
+  - 47/47 pytest passing on the new code.
+  - Playwright confirms the nav item still reads "System Diagnostics" and the badge stays hidden while every check is green.
+- Distribution ZIP rebuilt at 6.4 MB.
+
+
 - **Added** `GET /api/diagnostics` in a new `routers/diagnostics.py` (63 lines) — runs six server-side checks and returns a structured report:
   1. Database connection (Mongo ping + latency)
   2. Database version (MongoDB build info + schema version + collection count)
