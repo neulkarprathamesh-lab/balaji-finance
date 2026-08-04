@@ -71,7 +71,8 @@ def test_cashier_creates_school_receipt():
     r = requests.post(f"{BASE}/api/receipts", json=body, headers=H("cashier"))
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["number"].startswith("EP-2026-")
+    year_prefix = dept.get("academic_year", "2026-27").split("-")[0]
+    assert d["number"].startswith(f"EP-{year_prefix}-")
     assert d["total"] == 1000
     assert d["receipt_type"] == "school"
 
@@ -106,7 +107,8 @@ def test_debit_voucher_numbering():
     r = requests.post(f"{BASE}/api/receipts", json=body, headers=H("manager"))
     assert r.status_code == 200, r.text
     num = r.json()["number"]
-    assert num.startswith("V-2026-"), f"got {num}"
+    year_prefix = dept.get("academic_year", "2026-27").split("-")[0]
+    assert num.startswith(f"V-{year_prefix}-"), f"got {num}"
     assert len(num.split("-")[-1]) == 6
 
 
