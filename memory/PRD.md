@@ -103,6 +103,24 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **Kiosk Sibling Combined**: The public `/parent/:adm` page now leads with a richer Family Ledger card — Total / Paid / Concession / Family Outstanding tiles plus a per-child mini list showing each sibling's initials avatar, name, admission no, class, and Due amount (or a green "✓ Paid up" pill). Parents see the whole family bill in one glance the moment any child's QR is scanned.
 - **Receipt Search Chips**: `/receipts` now has quick-view chips at the top — Today, This Week, This Month, Cancelled, Clear. Selecting a chip auto-fills the date range (or filters status). Header dynamically updates to `N receipts · ₹X collected` (cancelled receipts excluded from the collected total).
 
+### 2026-02-04 (continued 3) — Day-End + Kiosk Fee Slip
+- **Cashier Day-End Summary** at `/day-end` (all roles):
+  - Filters: date (defaults today), cashier dropdown (admin+ only) or auto-scoped for cashier role.
+  - Money trio: Collected (Gross) · Refunded/Vouchers · **Net Cash Handover**.
+  - Breakdown grids by payment mode (Cash/UPI/Card/Cheque/DD…) and by receipt type (school/admission/bus/refund/misc/general_collection…).
+  - Per-cashier table (when "All cashiers" selected) with issued, cancelled, collected, refunded, net.
+  - Receipt-by-receipt list for single-cashier drill-down.
+  - Handover signature block (Cashier + Authorised By) + Print action.
+  - Backend endpoint `GET /api/reports/day-end?date=&cashier_id=`. Cashiers are auto-scoped to their own id.
+- **Kiosk Fee Slip** at `/parent/:adm/slip` (public, no auth):
+  - A4 sheet with navy header, deterministic Slip ID (e.g. `BC-SLIP-007WQB80`), issue date, academic year.
+  - Guardian card + QR code that verifies the family's live ledger.
+  - Family Ledger Summary tiles + Children table with per-child row + FAMILY TOTAL navy row.
+  - Recent Receipts across the whole family (up to 8 rows), computer-generated notice + school-seal placeholder + Principal signature block.
+  - Watermark "BALAJI CONVENT" behind content. Print → Save as PDF via browser.
+  - StudentLookup now surfaces a **"Download Family Fee Slip (PDF)"** action button.
+
+
   - Bottom status strip: "Receipt number will be generated centrally"
 - Preserved the original comprehensive form (all 9 receipt types including Bus/Voucher/Refund) at `/new-receipt-advanced` via new `NewReceiptAdvanced.js`, reachable via the header link.
 - **ImportExcel.js**: uses a client-generated `batch_id` per file so undo is atomic; supports undo for **both** students and fee structures (uses the new `/bulk-delete` endpoints).

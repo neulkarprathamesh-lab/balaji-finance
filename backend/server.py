@@ -1604,6 +1604,77 @@ async def defaulters_report(
     rows.sort(key=lambda x: (-x["outstanding"]))
     return {"count": len(rows), "total_outstanding": sum(r["outstanding"] for r in rows), "students": rows, "quarter": quarter}
 
+@api.get("/reports/day-end")
+async def day_end_report(
+    date: Optional[str] = None,
+    cashier_id: Optional[str] = None,
+    user = Depends(get_current_user),
+):
+    """One-tap cashier day-end summary. date = YYYY-MM-DD (defaults to today, IST-agnostic UTC).
+    If cashier_id omitted → current user for cashier role; admins/managers see all cashiers grouped."""
+    from datetime import datetime as _dt, timezone as _tz
+    day = date or _dt.now(_tz.utc).date().isoformat()
+    q: Dict[str, Any] = {"created_at": {"$gte": day + "T00:00:00", "$lte": day + "T23:59:59.999999"}}
+    role = user.get("role")
+    if role == "cashier":
+        cashier_id = user["id"]
+    if cashier_id:
+        q["cashier_id"] = cashier_id
+    receipts = await db.receipts.find(q, {"_id":0}).sort("created_at", 1).to_list(5000)
+
+    def agg_of(rs):
+        by_mode: Dict[str, float] = {}
+        by_type: Dict[str, float] = {}
+        collected = refunded = 0.0
+        issued = cancelled = 0
+        for r in rs:
+            total = float(r.get("total", 0) or 0)
+            mode = (r.get("payment_mode") or "other").lower()
+            rt = r.get("receipt_type") or "school"
+            if r.get("status") == "cancelled":
+                cancelled += 1
+                continue
+            issued += 1
+            if rt == "refund" or rt == "debit_voucher":
+                refunded += total
+            else:
+                collected += total
+            by_mode[mode] = by_mode.get(mode, 0) + total
+            by_type[rt] = by_type.get(rt, 0) + total
+        return {
+            "collected": round(collected, 2), "refunded": round(refunded, 2),
+            "net": round(collected - refunded, 2), "issued": issued, "cancelled": cancelled,
+            "by_mode": [{"mode": k, "amount": round(v,2)} for k, v in sorted(by_mode.items(), key=lambda x: -x[1])],
+            "by_type": [{"type": k, "amount": round(v,2)} for k, v in sorted(by_type.items(), key=lambda x: -x[1])],
+        }
+
+    payload: Dict[str, Any] = {"date": day, "generated_at": now_iso(), "generated_by": user["name"]}
+    if cashier_id:
+        # single cashier report
+        cashier = await db.users.find_one({"id": cashier_id}, {"_id":0, "password_hash":0}) or {"name": "Unknown"}
+        payload["cashier"] = {"id": cashier_id, "name": cashier.get("name"), "role": cashier.get("role")}
+        payload.update(agg_of(receipts))
+        payload["receipts"] = [
+            {"number": r.get("number"), "receipt_type": r.get("receipt_type"), "payer_name": r.get("payer_name"),
+             "payment_mode": r.get("payment_mode"), "total": r.get("total"), "status": r.get("status"),
+             "created_at": r.get("created_at"), "department_code": r.get("department_code")}
+            for r in receipts
+        ]
+    else:
+        # group by cashier
+        by_cashier: Dict[str, List[dict]] = {}
+        for r in receipts:
+            by_cashier.setdefault(r.get("cashier_id","unknown"), []).append(r)
+        cashiers = []
+        for cid, rs in by_cashier.items():
+            u = await db.users.find_one({"id": cid}, {"_id":0, "password_hash":0}) or {"name": rs[0].get("cashier_name","Unknown")}
+            item = {"id": cid, "name": u.get("name"), "role": u.get("role"), **agg_of(rs)}
+            cashiers.append(item)
+        cashiers.sort(key=lambda x: -x["net"])
+        payload["cashiers"] = cashiers
+        payload.update(agg_of(receipts))  # grand totals
+    return payload
+
 @app.on_event("shutdown")
 async def on_shutdown():
     client.close()

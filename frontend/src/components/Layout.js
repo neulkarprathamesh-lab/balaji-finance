@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen, Sunset
 } from 'lucide-react';
 
 const nav = [

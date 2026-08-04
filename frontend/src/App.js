@@ -30,6 +30,8 @@ import Defaulters from '@/pages/Defaulters';
 import Lookup from '@/pages/Lookup';
 import KioskPoster from '@/pages/KioskPoster';
 import StudentLookup from '@/pages/StudentLookup';
+import FeeSlip from '@/pages/FeeSlip';
+import DayEnd from '@/pages/DayEnd';
 import ImportExcel from '@/pages/ImportExcel';
 import ImportsHistory from '@/pages/ImportsHistory';
 import LockScreen from '@/components/LockScreen';
@@ -61,6 +63,7 @@ export default function App() {
             <Route path="extensions" element={<Extensions />} />
             <Route path="reminders" element={<Reminders />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="day-end" element={<DayEnd />} />
             <Route path="defaulters" element={<Defaulters />} />
             <Route path="cancellations" element={<Protected roles={['administrator','manager','accountant']}><Cancellations /></Protected>} />
             <Route path="concessions" element={<Protected roles={['administrator','manager','accountant']}><Concessions /></Protected>} />
@@ -80,6 +83,7 @@ export default function App() {
           <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />
           <Route path="/lookup/:number" element={<Lookup />} />
           <Route path="/parent/:adm" element={<StudentLookup />} />
+          <Route path="/parent/:adm/slip" element={<FeeSlip />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

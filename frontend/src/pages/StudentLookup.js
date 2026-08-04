@@ -43,6 +43,11 @@ export default function StudentLookup() {
       </div>
 
       <div className="max-w-3xl mx-auto p-6 space-y-4">
+        <div className="flex items-center justify-end -mb-2">
+          <a href={`/parent/${adm}/slip`} data-testid="fs-download-link" className="inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full border border-slate-900 bg-slate-900 text-white hover:bg-slate-800">
+            Download Family Fee Slip (PDF)
+          </a>
+        </div>
         {children.length > 1 && (
           <div className="bg-emerald-50 border-2 border-emerald-500 rounded p-4">
             <div className="flex items-center justify-between mb-2">
