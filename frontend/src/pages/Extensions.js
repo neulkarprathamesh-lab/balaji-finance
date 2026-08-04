@@ -18,7 +18,7 @@ export default function Extensions() {
   const [insts, setInsts] = useState([{ name:'Installment 1', amount: '', due_date: '' }]);
 
   const load = () => { const p = status?`?status=${status}`:''; api.get(`/extensions${p}`).then(r => setRows(r.data)); };
-  useEffect(load, [status]);
+  useEffect(() => { load(); }, [status]);
 
   const total = insts.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
   const addInst = () => insts.length < 4 && setInsts([...insts, { name:`Installment ${insts.length+1}`, amount:'', due_date:'' }]);

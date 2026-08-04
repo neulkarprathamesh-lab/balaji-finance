@@ -18,7 +18,7 @@ export default function Reminders() {
   const [rows, setRows] = useState([]);
   const [bucket, setBucket] = useState('all');
   const load = () => api.get('/reminders?status=pending').then(r => setRows(r.data));
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const filtered = bucket==='all' ? rows : rows.filter(r => r.bucket === bucket);
   const counts = { overdue:0, today:0, tomorrow:0, future:0 };

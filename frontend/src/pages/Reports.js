@@ -17,7 +17,7 @@ export default function Reports() {
     if (dept) p.set('department_id', dept);
     api.get(`/reports/collection?${p.toString()}`).then(r => setData(r.data));
   };
-  useEffect(run, []); // eslint-disable-line
+  useEffect(() => { load(); }, []); // eslint-disable-line
 
   return (
     <>

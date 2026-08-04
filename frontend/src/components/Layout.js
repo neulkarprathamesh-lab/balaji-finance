@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail
 } from 'lucide-react';
 
 const nav = [
@@ -14,9 +14,12 @@ const nav = [
   { to: '/adjustments', label: 'Fee Adjustments', icon: FileEdit, roles: ['*'] },
   { to: '/extensions', label: 'Payment Extensions', icon: CalendarClock, roles: ['*'] },
   { to: '/reminders', label: 'Reminders', icon: Bell, roles: ['*'] },
+  { to: '/bus-routes', label: 'Bus Routes', icon: Bus, roles: ['*'] },
+  { to: '/fee-notices', label: 'Fee Notices', icon: Mail, roles: ['*'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, roles: ['*'] },
   { to: '/cancellations', label: 'Cancellations', icon: XCircle, roles: ['administrator','manager','accountant'] },
   { to: '/concessions', label: 'Concession Ledger', icon: Award, roles: ['administrator','manager','accountant'] },
+  { to: '/promotion', label: 'Promotion & Rollover', icon: GraduationCap, roles: ['administrator','manager'] },
   { to: '/fee-structure', label: 'Fee Structure', icon: Wallet, roles: ['administrator','manager','accountant'] },
   { to: '/admin', label: 'Administration', icon: Shield, roles: ['administrator'] },
 ];

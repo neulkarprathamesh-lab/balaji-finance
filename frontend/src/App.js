@@ -18,6 +18,9 @@ import FeeStructure from '@/pages/FeeStructure';
 import Admin from '@/pages/Admin';
 import Cancellations from '@/pages/Cancellations';
 import Concessions from '@/pages/Concessions';
+import Promotion from '@/pages/Promotion';
+import BusRoutes from '@/pages/BusRoutes';
+import FeeNotices from '@/pages/FeeNotices';
 import '@/index.css';
 
 const Protected = ({ children, roles }) => {
@@ -47,6 +50,9 @@ export default function App() {
             <Route path="reports" element={<Reports />} />
             <Route path="cancellations" element={<Protected roles={['administrator','manager','accountant']}><Cancellations /></Protected>} />
             <Route path="concessions" element={<Protected roles={['administrator','manager','accountant']}><Concessions /></Protected>} />
+            <Route path="promotion" element={<Protected roles={['administrator','manager']}><Promotion /></Protected>} />
+            <Route path="bus-routes" element={<BusRoutes />} />
+            <Route path="fee-notices" element={<FeeNotices />} />
             <Route path="fee-structure" element={<Protected roles={['administrator','manager','accountant']}><FeeStructure /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>

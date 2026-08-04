@@ -177,6 +177,31 @@ class ReminderFollowupIn(BaseModel):
     remark_type: Literal["will_pay_today","will_pay_tomorrow","contacted","not_reachable","visited","payment_received","other"]
     details: Optional[str] = None
 
+class PromoteIn(BaseModel):
+    from_class_id: str
+    to_class_id: str
+    to_fee_structure_id: Optional[str] = None
+    new_academic_year: Optional[str] = None
+    section: Optional[str] = None
+
+class RolloverIn(BaseModel):
+    from_academic_year: str  # e.g. "2026-27"
+    to_academic_year: str    # e.g. "2027-28"
+
+class BusStopIn(BaseModel):
+    name: str
+    monthly_fee: float
+
+class BusRouteIn(BaseModel):
+    name: str
+    code: str
+    driver_name: Optional[str] = None
+    driver_mobile: Optional[str] = None
+    vehicle_no: Optional[str] = None
+    monthly_fee: float = 0
+    stops: List[BusStopIn] = []
+    active: bool = True
+
 # ---------------- Auth ----------------
 @api.post("/auth/login")
 async def login(body: LoginIn, response: Response):
@@ -707,6 +732,143 @@ async def concession_ledger(
         m = (r.get("approved_at") or "")[:7]
         by_month[m] = by_month.get(m, 0) + r.get("amount", 0)
     return {"rows": rows, "count": len(rows), "total": total, "by_type": by_type, "by_month": by_month}
+
+# ---------------- Student Promotion ----------------
+@api.post("/students/promote")
+async def promote_students(body: PromoteIn, user = Depends(require_roles("administrator","manager"))):
+    from_cls = await db.classes.find_one({"id": body.from_class_id})
+    to_cls = await db.classes.find_one({"id": body.to_class_id})
+    if not from_cls or not to_cls:
+        raise HTTPException(400, "Invalid class")
+    q = {"class_id": body.from_class_id, "status": "active"}
+    if body.section: q["section"] = body.section
+    students = await db.students.find(q, {"_id":0}).to_list(5000)
+    upd: Dict[str, Any] = {"class_id": body.to_class_id, "department_id": to_cls["department_id"]}
+    if body.to_fee_structure_id:
+        upd["fee_structure_id"] = body.to_fee_structure_id
+    else:
+        upd["fee_structure_id"] = None  # clear so office reassigns
+    for s in students:
+        await db.students.update_one({"id": s["id"]}, {"$set": upd, "$push": {"promotion_history": {"from_class_id": body.from_class_id, "to_class_id": body.to_class_id, "at": now_iso(), "by": user["name"], "academic_year": body.new_academic_year}}})
+    await audit(user, "promote", "class", body.to_class_id, {"count": len(students), "from": from_cls["name"], "to": to_cls["name"]})
+    return {"promoted": len(students), "from_class": from_cls["name"], "to_class": to_cls["name"]}
+
+@api.post("/fee-structures/rollover")
+async def rollover_fee_structures(body: RolloverIn, user = Depends(require_roles("administrator","manager"))):
+    existing = await db.fee_structures.find({"academic_year": body.from_academic_year}, {"_id":0}).to_list(500)
+    created = 0
+    for fs in existing:
+        dup = await db.fee_structures.find_one({"academic_year": body.to_academic_year, "department_id": fs["department_id"], "class_id": fs["class_id"]})
+        if dup: continue
+        new_fs = {
+            "id": gen_id(),
+            "department_id": fs["department_id"], "class_id": fs["class_id"],
+            "academic_year": body.to_academic_year,
+            "items": fs.get("items", []), "total": fs.get("total", 0),
+            "cloned_from": fs["id"], "created_at": now_iso(),
+        }
+        await db.fee_structures.insert_one(new_fs); created += 1
+    # Also bump departments' current academic_year to the new one
+    await db.departments.update_many({"academic_year": body.from_academic_year}, {"$set": {"academic_year": body.to_academic_year}})
+    await audit(user, "rollover", "fee_structure", "", {"from": body.from_academic_year, "to": body.to_academic_year, "created": created})
+    return {"created": created, "from": body.from_academic_year, "to": body.to_academic_year}
+
+# ---------------- Bus Routes ----------------
+@api.get("/bus-routes")
+async def list_bus_routes(user = Depends(get_current_user)):
+    return await db.bus_routes.find({}, {"_id":0}).sort("name", 1).to_list(200)
+
+@api.post("/bus-routes")
+async def create_bus_route(body: BusRouteIn, user = Depends(require_roles("administrator","manager","accountant"))):
+    if await db.bus_routes.find_one({"code": body.code}):
+        raise HTTPException(400, "Route code already exists")
+    rid = gen_id()
+    doc = {"id": rid, **body.model_dump(), "created_at": now_iso()}
+    await db.bus_routes.insert_one(doc)
+    await audit(user, "create", "bus_route", rid, {"code": body.code})
+    return {k:v for k,v in doc.items() if k != "_id"}
+
+@api.patch("/bus-routes/{rid}")
+async def update_bus_route(rid: str, body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
+    allowed = {k: v for k, v in body.items() if k in ("name","driver_name","driver_mobile","vehicle_no","monthly_fee","stops","active")}
+    await db.bus_routes.update_one({"id": rid}, {"$set": allowed})
+    await audit(user, "update", "bus_route", rid, allowed)
+    return {"ok": True}
+
+@api.get("/bus-routes/{rid}/roster")
+async def bus_route_roster(rid: str, month: Optional[str] = None, user = Depends(get_current_user)):
+    route = await db.bus_routes.find_one({"id": rid}, {"_id":0})
+    if not route: raise HTTPException(404, "Route not found")
+    students = await db.students.find({"bus_route": route["code"], "status":"active"}, {"_id":0}).to_list(2000)
+    m = month or date.today().isoformat()[:7]  # YYYY-MM
+    sids = [s["id"] for s in students]
+    receipts = await db.receipts.find({
+        "receipt_type": "bus", "student_id": {"$in": sids}, "status": {"$ne":"cancelled"},
+        "created_at": {"$gte": m + "-01", "$lte": m + "-31T23:59:59"},
+    }, {"_id":0}).to_list(5000)
+    paid_by = {}
+    for r in receipts:
+        paid_by[r["student_id"]] = paid_by.get(r["student_id"], 0) + r.get("total", 0)
+    roster = []
+    for s in students:
+        roster.append({
+            "student_id": s["id"], "admission_no": s["admission_no"], "name": s["name"],
+            "class_id": s.get("class_id"), "guardian_mobile": s.get("guardian_mobile"),
+            "paid_this_month": paid_by.get(s["id"], 0),
+            "status": "paid" if paid_by.get(s["id"], 0) >= route.get("monthly_fee", 0) and route.get("monthly_fee", 0) > 0 else "pending",
+        })
+    collected = sum(paid_by.values())
+    return {"route": route, "month": m, "students_count": len(students), "collected": collected, "expected": route.get("monthly_fee",0) * len(students), "roster": roster}
+
+# ---------------- Fee Notices (Outstanding) ----------------
+@api.get("/notices/outstanding")
+async def outstanding_notices(
+    department_id: Optional[str] = None, class_id: Optional[str] = None,
+    min_amount: float = 1,
+    user = Depends(get_current_user),
+):
+    q: Dict[str, Any] = {"status":"active"}
+    if department_id: q["department_id"] = department_id
+    if class_id: q["class_id"] = class_id
+    students = await db.students.find(q, {"_id":0}).to_list(5000)
+    if not students:
+        return {"count": 0, "students": []}
+    dept_map = {d["id"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
+    class_map = {c["id"]: c for c in await db.classes.find({}, {"_id":0}).to_list(500)}
+    fs_ids = list({s.get("fee_structure_id") for s in students if s.get("fee_structure_id")})
+    fs_map = {f["id"]: f for f in await db.fee_structures.find({"id":{"$in": fs_ids}}, {"_id":0}).to_list(500)} if fs_ids else {}
+    sids = [s["id"] for s in students]
+    receipts = await db.receipts.find({"student_id":{"$in": sids}, "status":{"$ne":"cancelled"}}, {"_id":0}).to_list(20000)
+    adjs = await db.adjustments.find({"student_id":{"$in": sids}, "status":"approved"}, {"_id":0}).to_list(5000)
+    paid_by: Dict[str,float] = {}; refund_by: Dict[str,float] = {}; adj_by: Dict[str,float] = {}
+    for r in receipts:
+        if r.get("receipt_type") in ("refund",):
+            refund_by[r["student_id"]] = refund_by.get(r["student_id"],0) + r.get("total",0)
+        elif r.get("receipt_type") in ("school","admission","bus","misc","department","general_money","general_collection"):
+            paid_by[r["student_id"]] = paid_by.get(r["student_id"],0) + r.get("total",0)
+    for a in adjs:
+        adj_by[a["student_id"]] = adj_by.get(a["student_id"],0) + a.get("amount",0)
+    out = []
+    for s in students:
+        fs = fs_map.get(s.get("fee_structure_id"))
+        total_fee = fs.get("total", 0) if fs else 0
+        paid = paid_by.get(s["id"], 0)
+        refund = refund_by.get(s["id"], 0)
+        adjusted = adj_by.get(s["id"], 0)
+        outstanding = max(0, total_fee - paid - adjusted + refund)
+        if outstanding < min_amount: continue
+        out.append({
+            "student_id": s["id"], "admission_no": s["admission_no"], "name": s["name"],
+            "guardian_name": s.get("guardian_name"), "guardian_mobile": s.get("guardian_mobile"),
+            "department_name": dept_map.get(s["department_id"],{}).get("name"),
+            "class_name": class_map.get(s["class_id"],{}).get("name"),
+            "academic_year": dept_map.get(s["department_id"],{}).get("academic_year"),
+            "total_fee": total_fee, "paid": paid, "adjusted": adjusted, "refunded": refund,
+            "outstanding": outstanding,
+            "items": fs.get("items", []) if fs else [],
+        })
+    out.sort(key=lambda x: (-x["outstanding"]))
+    return {"count": len(out), "students": out}
 
 # ---------------- Seed ----------------
 async def seed_data():

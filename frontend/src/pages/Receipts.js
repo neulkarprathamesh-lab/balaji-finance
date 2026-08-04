@@ -19,7 +19,7 @@ export default function Receipts() {
     if (dt) p.set('date_to', dt);
     api.get(`/receipts?${p.toString()}`).then(r => setRows(r.data));
   };
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   return (
     <>

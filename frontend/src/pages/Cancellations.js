@@ -15,7 +15,7 @@ export default function Cancellations() {
     if (to) p.set('date_to', to);
     api.get(`/reports/cancellations?${p.toString()}`).then(r => setData(r.data));
   };
-  useEffect(run, []); // eslint-disable-line
+  useEffect(() => { run(); }, []); // eslint-disable-line
 
   return (
     <>

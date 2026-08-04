@@ -14,7 +14,7 @@ export default function Adjustments() {
   const [f, setF] = useState({ student_id: sp.get('student')||'', adjustment_type:'scholarship', amount:'', reason:'', fee_head_id:'' });
 
   const load = () => { const p = status ? `?status=${status}` : ''; api.get(`/adjustments${p}`).then(r => setRows(r.data)); };
-  useEffect(load, [status]);
+  useEffect(() => { load(); }, [status]);
 
   const submit = async (e) => {
     e.preventDefault();
