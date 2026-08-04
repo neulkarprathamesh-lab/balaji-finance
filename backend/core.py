@@ -1,0 +1,595 @@
+"""Balaji Convent Fee Software - Shared core.
+DB client, models, deps, utils, admin PIN gates, numbering, seed data.
+Kept as a single module so every router can `from core import ...`.
+"""
+from dotenv import load_dotenv
+from pathlib import Path
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+import os
+import uuid
+import bcrypt
+import jwt
+import io
+import zipfile
+import json as _json
+import hashlib
+from datetime import datetime, timezone, timedelta, date
+from typing import List, Optional, Any, Dict, Literal
+from fastapi import HTTPException, Depends, Request, Header
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, EmailStr
+
+# ---------------- DB ----------------
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+JWT_SECRET = os.environ['JWT_SECRET']
+JWT_ALGO = 'HS256'
+ACCESS_MIN = 60 * 12  # 12h for LAN use
+
+BACKUP_DIR = Path("/app/backups")
+SETTINGS_ID = "school_settings"
+CONFIG_COLLECTIONS = [
+    "receipt_types", "departments", "classes", "fee_heads", "fee_structures",
+    "settings", "bus_routes",
+]
+
+# ---------------- Utils ----------------
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def gen_id() -> str:
+    return str(uuid.uuid4())
+
+def hash_password(p: str) -> str:
+    return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(p: str, h: str) -> bool:
+    try:
+        return bcrypt.checkpw(p.encode(), h.encode())
+    except Exception:
+        return False
+
+def create_access_token(user_id: str, email: str, role: str) -> str:
+    payload = {
+        "sub": user_id, "email": email, "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_MIN),
+        "type": "access",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+def clean(doc: dict) -> dict:
+    if not doc: return doc
+    doc.pop('_id', None)
+    doc.pop('password_hash', None)
+    return doc
+
+# ---------------- Auth deps ----------------
+async def get_current_user(request: Request) -> dict:
+    token = request.cookies.get("access_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
+    user = await db.users.find_one({"id": payload["sub"]})
+    if not user:
+        raise HTTPException(401, "User not found")
+    return clean(user)
+
+def require_roles(*roles: str):
+    async def _dep(user = Depends(get_current_user)):
+        if user["role"] not in roles:
+            raise HTTPException(403, f"Requires role: {', '.join(roles)}")
+        return user
+    return _dep
+
+async def audit(user: dict, action: str, entity: str, entity_id: str = "", details: dict = None):
+    await db.audit_log.insert_one({
+        "id": gen_id(), "user_id": user["id"], "user_email": user["email"],
+        "user_role": user["role"], "action": action, "entity": entity,
+        "entity_id": entity_id, "details": details or {}, "timestamp": now_iso(),
+    })
+
+# ---------------- Admin PIN gates ----------------
+async def require_admin_pin(x_admin_pin: Optional[str] = Header(None), user = Depends(require_roles("administrator"))):
+    if not x_admin_pin:
+        raise HTTPException(401, "Administrator PIN required")
+    current = await db.users.find_one({"id": user["id"]})
+    if not current.get("pin_hash"):
+        raise HTTPException(400, "Set your Administrator PIN in My Profile first.")
+    if not verify_password(x_admin_pin, current["pin_hash"]):
+        await audit(user, "admin_pin_fail", "auth", user["id"], {"event": "invalid_pin"})
+        raise HTTPException(403, "Invalid administrator PIN")
+    return user
+
+async def require_admin_dual(
+    x_admin_pin: Optional[str] = Header(None),
+    x_admin_password: Optional[str] = Header(None),
+    user = Depends(require_roles("administrator")),
+):
+    if not x_admin_pin or not x_admin_password:
+        raise HTTPException(401, "Administrator PIN and password required for this action")
+    current = await db.users.find_one({"id": user["id"]})
+    if not current.get("pin_hash") or not verify_password(x_admin_pin, current["pin_hash"]):
+        await audit(user, "admin_dual_fail", "auth", user["id"], {"event": "invalid_pin"})
+        raise HTTPException(403, "Invalid administrator PIN")
+    if not verify_password(x_admin_password, current["password_hash"]):
+        await audit(user, "admin_dual_fail", "auth", user["id"], {"event": "invalid_password"})
+        raise HTTPException(403, "Invalid administrator password")
+    return user
+
+# ---------------- Settings helpers ----------------
+async def get_settings_doc():
+    doc = await db.settings.find_one({"id": SETTINGS_ID}, {"_id": 0})
+    if not doc:
+        doc = {
+            "id": SETTINGS_ID,
+            "school_name": "Balaji Convent & Junior College",
+            "school_address": "Butibori, Nagpur",
+            "school_phone": "",
+            "school_email": "",
+            "receipt_footer": "This is a computer-generated receipt.",
+            "notice_footer": "Fee counter timing: 9:00 AM – 3:00 PM (Monday to Saturday). Modes accepted: Cash / Cheque / DD / UPI / NEFT.",
+            "bus_annual_months": 12,
+            "q1_due_date": "2026-06-30",
+            "q2_due_date": "2026-09-30",
+            "q3_due_date": "2026-12-31",
+            "reminder_lead_days": 7,
+            "manager_waiver_cap": 5000,
+        }
+        await db.settings.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+# ---------------- Models ----------------
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    role: Literal["cashier", "accountant", "manager", "administrator"]
+    department_id: Optional[str] = None
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+class PinSetIn(BaseModel):
+    new_pin: str
+    current_password: Optional[str] = None
+    current_pin: Optional[str] = None
+
+class PinVerifyIn(BaseModel):
+    pin: str
+
+class DepartmentIn(BaseModel):
+    name: str
+    code: str
+    academic_year: str = "2026-27"
+
+class ReceiptTypeIn(BaseModel):
+    code: str
+    name: str
+    department_name: Optional[str] = None
+    department_id: Optional[str] = None
+    category: Literal["school","bus","finance","misc"] = "school"
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    display_order: int = 100
+    enabled: bool = True
+    archived: bool = False
+    tabs: List[str] = ["school","installment","misc"]
+    default_payment_modes: List[str] = ["cash","upi","card"]
+    print_template: str = "a4-navy"
+    report_category: Optional[str] = None
+    notes: Optional[str] = None
+    paper_size: Literal["A4","A5","Thermal80"] = "A4"
+    orientation: Literal["portrait","landscape"] = "portrait"
+    header_text: Optional[str] = None
+    footer_text: Optional[str] = None
+    watermark_text: Optional[str] = None
+    watermark_enabled: bool = False
+    barcode_enabled: bool = False
+    qr_enabled: bool = True
+    signature_area_enabled: bool = True
+    computer_generated_note: str = "This is a computer-generated receipt."
+    starting_number: int = 1
+    current_number: Optional[int] = None
+    auto_reset_yearly: bool = True
+    fields: Dict[str, bool] = {
+        "admission_no": True, "roll_no": False, "parent_name": True, "mobile": True,
+        "class": True, "division": False, "department": True, "academic_year": True,
+        "session": False, "fee_head": True, "amount_in_words": True, "payment_mode": True,
+        "transaction_id": True, "cashier_name": True, "authorized_by": False, "remarks": True,
+    }
+
+class ClassIn(BaseModel):
+    department_id: str
+    name: str
+    section: Optional[str] = None
+
+class FeeHeadIn(BaseModel):
+    name: str
+    code: str
+    category: Literal["school", "admission", "bus", "misc", "general"] = "school"
+
+class FeeStructureIn(BaseModel):
+    department_id: str
+    class_id: str
+    academic_year: str = "2026-27"
+    items: List[Dict[str, Any]]
+
+class StudentIn(BaseModel):
+    admission_no: str
+    name: str
+    department_id: str
+    class_id: str
+    section: Optional[str] = None
+    guardian_name: Optional[str] = None
+    guardian_mobile: Optional[str] = None
+    address: Optional[str] = None
+    fee_structure_id: Optional[str] = None
+    bus_route: Optional[str] = None
+    admission_category: Optional[str] = None
+    admission_date: Optional[str] = None
+
+class ReceiptLineIn(BaseModel):
+    fee_head_id: Optional[str] = None
+    fee_head_name: str
+    installment: Optional[str] = None
+    amount: float
+    note: Optional[str] = None
+
+class ReceiptIn(BaseModel):
+    receipt_type: Literal["school","admission","bus","misc","department","general_money","refund","debit_voucher","general_collection"]
+    department_id: str
+    student_id: Optional[str] = None
+    payer_name: Optional[str] = None
+    purpose: Optional[str] = None
+    payment_mode: Literal["cash","cheque","dd","upi","neft","card","other"] = "cash"
+    payment_reference: Optional[str] = None
+    lines: List[ReceiptLineIn]
+    remarks: Optional[str] = None
+    linked_receipt_id: Optional[str] = None
+    approver_id: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+
+class AdjustmentIn(BaseModel):
+    student_id: str
+    adjustment_type: Literal["scholarship","staff_child","management","financial_assistance","special","correction"]
+    amount: float
+    reason: str
+    fee_head_id: Optional[str] = None
+
+class ExtensionIn(BaseModel):
+    student_id: str
+    outstanding_amount: float
+    installments: List[Dict[str, Any]]
+    application_note: Optional[str] = None
+    scanned_url: Optional[str] = None
+
+class ReminderFollowupIn(BaseModel):
+    reminder_id: str
+    remark_type: Literal["will_pay_today","will_pay_tomorrow","contacted","not_reachable","visited","payment_received","other"]
+    details: Optional[str] = None
+
+class PromoteIn(BaseModel):
+    from_class_id: str
+    to_class_id: str
+    to_fee_structure_id: Optional[str] = None
+    new_academic_year: Optional[str] = None
+    section: Optional[str] = None
+
+class RolloverIn(BaseModel):
+    from_academic_year: str
+    to_academic_year: str
+
+class BusStopIn(BaseModel):
+    name: str
+    monthly_fee: float
+
+class BusRouteIn(BaseModel):
+    name: str
+    code: str
+    driver_name: Optional[str] = None
+    driver_mobile: Optional[str] = None
+    vehicle_no: Optional[str] = None
+    monthly_fee: float = 0
+    stops: List[BusStopIn] = []
+    active: bool = True
+
+# ---------------- Numbering ----------------
+async def next_receipt_number(dept_code: str, academic_year: str) -> str:
+    key = f"{dept_code}-{academic_year}"
+    doc = await db.counters.find_one_and_update(
+        {"key": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    if not doc:
+        doc = await db.counters.find_one({"key": key})
+    seq = doc.get("seq", 1) if doc else 1
+    return f"{dept_code}-{academic_year.split('-')[0]}-{seq:06d}"
+
+async def next_receipt_number_by_prefix(prefix: str, academic_year: str) -> str:
+    key = f"RT-{prefix}-{academic_year}"
+    doc = await db.counters.find_one_and_update(
+        {"key": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    seq = doc.get("seq", 1) if doc else 1
+    return f"{prefix}-{academic_year.split('-')[0]}-{seq:06d}"
+
+async def next_voucher_number(academic_year: str) -> str:
+    key = f"VCH-{academic_year}"
+    doc = await db.counters.find_one_and_update(
+        {"key": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    seq = doc.get("seq", 1) if doc else 1
+    return f"V-{academic_year.split('-')[0]}-{seq:06d}"
+
+def amount_in_words_inr(n: float) -> str:
+    n = int(round(n))
+    if n == 0: return "Zero Rupees Only"
+    ones = ["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"]
+    tens = ["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"]
+    def two(x):
+        if x < 20: return ones[x]
+        return tens[x//10] + (" " + ones[x%10] if x%10 else "")
+    def three(x):
+        h, r = divmod(x, 100)
+        s = (ones[h] + " Hundred" + (" " + two(r) if r else "")) if h else two(r)
+        return s
+    parts = []
+    crore = n // 10000000; n %= 10000000
+    lakh  = n // 100000;   n %= 100000
+    thou  = n // 1000;     n %= 1000
+    rest  = n
+    if crore: parts.append(three(crore) + " Crore")
+    if lakh:  parts.append(two(lakh) + " Lakh")
+    if thou:  parts.append(two(thou) + " Thousand")
+    if rest:  parts.append(three(rest))
+    return " ".join(parts) + " Rupees Only"
+
+# ---------------- Default receipt-type catalog + seed helpers ----------------
+DEFAULT_RECEIPT_TYPES = [
+    {"code":"EP",     "name":"Balaji Convent English Primary School",                 "department_name":"English Primary Section",              "category":"school", "description":"Fees for Class 1–4 (English medium)",              "icon":"GraduationCap",   "display_order":10, "tabs":["school","installment","misc"]},
+    {"code":"MP",     "name":"Balaji Convent Marathi Primary School",                 "department_name":"Marathi Primary Section",              "category":"school", "description":"Fees for इयत्ता १–४ (मराठी माध्यम)",             "icon":"BookOpen",        "display_order":20, "tabs":["school","installment","misc"]},
+    {"code":"EMP",    "name":"Balaji Convent English & Marathi Primary School",       "department_name":"English + Marathi Primary (Combined)", "category":"school", "description":"Combined receipt when a family pays for both mediums", "icon":"GraduationCap", "display_order":30, "tabs":["school","installment","misc"]},
+    {"code":"SEC",    "name":"Balaji Convent Secondary School (Self Financing)",     "department_name":"Secondary Section",                    "category":"school", "description":"Class 5–10 self-financing",                         "icon":"Award",           "display_order":40, "tabs":["school","installment","misc"]},
+    {"code":"JC",     "name":"Balaji Convent Junior College",                          "department_name":"Junior College",                       "category":"school", "description":"XI–XII, all standard streams",                       "icon":"GraduationCap",   "display_order":50, "tabs":["school","installment","misc"]},
+    {"code":"JCACS",  "name":"Balaji Convent JC (Arts, Commerce, Science & Bifocal)","department_name":"Junior College — ACS/Bifocal",         "category":"school", "description":"XI–XII with bifocal & specialised streams",         "icon":"Award",           "display_order":60, "tabs":["school","installment","misc"]},
+    {"code":"BUS",    "name":"Balaji Convent Bus Receipt",                             "department_name":"School Bus Transport",                 "category":"bus",    "description":"Monthly / termly bus route fees",                    "icon":"Bus",             "display_order":70, "tabs":["school"]},
+    {"code":"EMJC",   "name":"Balaji Convent English, Marathi & Junior College",     "department_name":"Combined EM + MP + JC",                "category":"school", "description":"Consolidated receipt across all three sections",     "icon":"ClipboardList",   "display_order":80, "tabs":["school","installment","misc"]},
+    {"code":"DV",     "name":"Debit Voucher",                                          "department_name":"Finance / Petty Cash",                 "category":"finance","description":"For expenses, refunds, vendor payments",             "icon":"Wallet",          "display_order":90, "tabs":["school"]},
+]
+
+async def _seed_receipt_types_if_empty():
+    n = await db.receipt_types.count_documents({})
+    if n > 0: return
+    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
+    now = now_iso()
+    for t in DEFAULT_RECEIPT_TYPES:
+        dept = depts.get(t["code"])
+        await db.receipt_types.insert_one({
+            "id": gen_id(), **t,
+            "department_id": dept["id"] if dept else None,
+            "enabled": True, "archived": False,
+            "default_payment_modes": ["cash","upi","card"],
+            "print_template": "a4-navy", "report_category": t["category"],
+            "created_at": now, "updated_at": now,
+        })
+
+# ---------------- Backup helper ----------------
+async def _create_backup_zip(kind: str, actor_name: str) -> Dict[str, Any]:
+    """Dumps every collection as JSON into a ZIP, records metadata, verifies integrity."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+    bid = gen_id()
+    fname = f"balaji-{kind}-{ts}-v1.0.0.zip"
+    path = BACKUP_DIR / fname
+    all_colls = list(set(CONFIG_COLLECTIONS + ["users","receipts","students","adjustments","extensions","reminders","import_batches","audit","counters"]))
+    manifest = {"id": bid, "kind": kind, "created_at": now_iso(), "created_by": actor_name, "app_version":"1.0.0", "database_version":"1", "collections": []}
+    hasher = hashlib.sha256()
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for coll in sorted(all_colls):
+            rows = await db[coll].find({}, {"_id":0}).to_list(200000)
+            payload = _json.dumps(rows, default=str)
+            zf.writestr(f"{coll}.json", payload)
+            manifest["collections"].append({"name": coll, "count": len(rows), "bytes": len(payload)})
+            hasher.update(payload.encode())
+        zf.writestr("manifest.json", _json.dumps(manifest, indent=2, default=str))
+    with zipfile.ZipFile(path, "r") as zf:
+        bad = zf.testzip()
+        if bad: raise RuntimeError(f"Backup verification failed at {bad}")
+    size = path.stat().st_size
+    manifest["size"] = size
+    manifest["filename"] = fname
+    manifest["path"] = str(path)
+    manifest["checksum_sha256"] = hasher.hexdigest()
+    await db.backups.insert_one(manifest.copy())
+    return manifest
+
+# ---------------- Startup seed ----------------
+async def seed_data():
+    await db.users.create_index("email", unique=True)
+    await db.students.create_index("admission_no", unique=True)
+    await db.receipts.create_index("number", unique=True)
+    await db.counters.create_index("key", unique=True)
+
+    admin_email = os.environ["ADMIN_EMAIL"].lower()
+    admin_pw = os.environ["ADMIN_PASSWORD"]
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": gen_id(), "email": admin_email, "password_hash": hash_password(admin_pw),
+            "name": os.environ.get("ADMIN_NAME","Administrator"), "role": "administrator",
+            "active": True, "created_at": now_iso(),
+        })
+    else:
+        if not verify_password(admin_pw, existing["password_hash"]):
+            await db.users.update_one({"email": admin_email}, {"$set":{"password_hash": hash_password(admin_pw)}})
+
+    demo_users = [
+        ("cashier@balajiconvent.in","cashier123","Ravi Cashier","cashier"),
+        ("accountant@balajiconvent.in","account123","Sunita Accountant","accountant"),
+        ("manager@balajiconvent.in","manager123","Anil Manager","manager"),
+    ]
+    for old_em, new_em in [
+        ("cashier@balaji.local","cashier@balajiconvent.in"),
+        ("accountant@balaji.local","accountant@balajiconvent.in"),
+        ("manager@balaji.local","manager@balajiconvent.in"),
+    ]:
+        legacy = await db.users.find_one({"email": old_em})
+        if legacy:
+            if await db.users.find_one({"email": new_em}):
+                await db.users.delete_one({"email": old_em})
+            else:
+                await db.users.update_one({"email": old_em}, {"$set": {"email": new_em}})
+    for em, pw, nm, rl in demo_users:
+        if not await db.users.find_one({"email": em}):
+            await db.users.insert_one({"id": gen_id(),"email": em,"password_hash": hash_password(pw),"name": nm,"role": rl,"active": True,"created_at": now_iso()})
+
+    if await db.departments.count_documents({}) == 0:
+        depts = [
+            {"name":"English Primary","code":"EP","header_line1":"BALAJI CONVENT","header_line2":"ENGLISH PRIMARY SCHOOL"},
+            {"name":"Marathi Primary","code":"MP","header_line1":"BALAJI CONVENT","header_line2":"MARATHI PRIMARY SCHOOL"},
+            {"name":"Secondary","code":"SEC","header_line1":"BALAJI CONVENT SECONDARY SCHOOL","header_line2":"SELF FINANCING"},
+            {"name":"Junior College","code":"JC","header_line1":"BALAJI CONVENT JR. COLLEGE","header_line2":"ARTS, COMMERCE, SCIENCE & BI-FOCAL"},
+        ]
+        for d in depts:
+            await db.departments.insert_one({"id": gen_id(), **d, "academic_year":"2026-27", "created_at": now_iso()})
+    else:
+        header_defaults = {
+            "EP": ("BALAJI CONVENT", "ENGLISH PRIMARY SCHOOL"),
+            "MP": ("BALAJI CONVENT", "MARATHI PRIMARY SCHOOL"),
+            "SEC": ("BALAJI CONVENT SECONDARY SCHOOL", "SELF FINANCING"),
+            "JC": ("BALAJI CONVENT JR. COLLEGE", "ARTS, COMMERCE, SCIENCE & BI-FOCAL"),
+        }
+        for code, (h1, h2) in header_defaults.items():
+            await db.departments.update_one(
+                {"code": code, "$or": [{"header_line1": {"$exists": False}}, {"header_line1": None}, {"header_line1": ""}]},
+                {"$set": {"header_line1": h1, "header_line2": h2}},
+            )
+
+    if await db.fee_heads.count_documents({}) == 0:
+        heads = [
+            ("Tuition Fee","TUIT","school"),
+            ("Exam Fee","EXAM","school"),
+            ("Activity Fee","ACT","school"),
+            ("Library Fee","LIB","school"),
+            ("Admission Fee","ADM","admission"),
+            ("Registration Fee","REG","admission"),
+            ("Bus Fee","BUS","bus"),
+            ("Uniform","UNI","misc"),
+            ("Books","BOOK","misc"),
+            ("Donation","DON","general"),
+        ]
+        for nm, cd, cat in heads:
+            await db.fee_heads.insert_one({"id": gen_id(),"name": nm,"code": cd,"category": cat,"created_at": now_iso()})
+
+    if await db.classes.count_documents({}) == 0:
+        depts = await db.departments.find({}, {"_id":0}).to_list(100)
+        by_code = {d["code"]: d for d in depts}
+        specs = {
+            "EP": ["Nursery","LKG","UKG","Class 1","Class 2","Class 3","Class 4","Class 5"],
+            "MP": ["Class 1","Class 2","Class 3","Class 4","Class 5"],
+            "SEC": ["Class 6","Class 7","Class 8","Class 9","Class 10"],
+            "JC": ["Class 11 - Science","Class 11 - Commerce","Class 12 - Science","Class 12 - Commerce"],
+        }
+        for code, classes in specs.items():
+            d = by_code.get(code)
+            if not d: continue
+            for nm in classes:
+                await db.classes.insert_one({"id": gen_id(),"department_id": d["id"],"name": nm,"created_at": now_iso()})
+
+    if await db.students.count_documents({}) == 0:
+        classes = await db.classes.find({}, {"_id":0}).to_list(500)
+        samples = [
+            ("BC-EP-001","Aarav Sharma","EP","Class 3","Rajesh Sharma","9876500001"),
+            ("BC-EP-002","Ishita Patil","EP","Class 5","Suresh Patil","9876500002"),
+            ("BC-MP-001","Rohan Deshmukh","MP","Class 4","Prakash Deshmukh","9876500003"),
+            ("BC-SEC-001","Priya Verma","SEC","Class 9","Manoj Verma","9876500004"),
+            ("BC-SEC-002","Karan Joshi","SEC","Class 10","Nitin Joshi","9876500005"),
+            ("BC-JC-001","Anjali Kulkarni","JC","Class 12 - Science","Vinod Kulkarni","9876500006"),
+        ]
+        depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(100)}
+        for adm, name, dcode, cname, gname, gmob in samples:
+            d = depts[dcode]
+            cls = next((c for c in classes if c["department_id"]==d["id"] and c["name"]==cname), None)
+            if not cls: continue
+            await db.students.insert_one({
+                "id": gen_id(),"admission_no": adm,"name": name,
+                "department_id": d["id"], "class_id": cls["id"],
+                "guardian_name": gname, "guardian_mobile": gmob, "status":"active",
+                "created_at": now_iso(),
+            })
+
+# ---------------- Quarterly reminder generator ----------------
+async def _generate_quarterly_reminders() -> Dict[str, int]:
+    settings = await get_settings_doc()
+    lead = int(settings.get("reminder_lead_days", 7) or 7)
+    quarters = [
+        ("Q1", settings.get("q1_due_date")),
+        ("Q2", settings.get("q2_due_date")),
+        ("Q3", settings.get("q3_due_date")),
+    ]
+    today = date.today()
+    quarters = [(q, d) for q, d in quarters if d]
+    if not quarters: return {"created": 0, "skipped": 0}
+
+    students = await db.students.find({"status": "active", "fee_structure_id": {"$ne": None}}, {"_id": 0}).to_list(10000)
+    if not students: return {"created": 0, "skipped": 0}
+    fs_ids = list({s.get("fee_structure_id") for s in students if s.get("fee_structure_id")})
+    fs_map = {f["id"]: f for f in await db.fee_structures.find({"id": {"$in": fs_ids}}, {"_id": 0}).to_list(500)}
+    sids = [s["id"] for s in students]
+    receipts = await db.receipts.find({"student_id": {"$in": sids}, "status": {"$ne": "cancelled"}, "receipt_type": {"$in": ["school", "admission"]}}, {"_id": 0}).to_list(20000)
+    paid_q: Dict[str, set] = {}
+    for r in receipts:
+        for line in r.get("lines", []):
+            nm = (line.get("fee_head_name") or "").lower()
+            for tag in ("q1", "q2", "q3"):
+                if tag in nm:
+                    paid_q.setdefault(r["student_id"], set()).add(tag.upper())
+    created, skipped = 0, 0
+    for s in students:
+        fs = fs_map.get(s["fee_structure_id"])
+        if not fs: continue
+        for q_label, q_due in quarters:
+            try:
+                due = datetime.strptime(q_due, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            days_to = (due - today).days
+            if days_to > lead: continue
+            if days_to < -60: continue
+            if q_label in paid_q.get(s["id"], set()): continue
+            amt = 0
+            for it in fs.get("items", []):
+                nm = (it.get("fee_head_name") or "").lower()
+                if q_label.lower() in nm: amt += float(it.get("amount", 0))
+            if amt <= 0: continue
+            key = f"tuition-{q_label}-{q_due}"
+            exists = await db.reminders.find_one({"student_id": s["id"], "key": key})
+            if exists:
+                skipped += 1; continue
+            await db.reminders.insert_one({
+                "id": gen_id(), "key": key, "student_id": s["id"],
+                "installment_name": f"Tuition {q_label}", "amount": amt,
+                "due_date": q_due, "status": "pending",
+                "auto_generated": True, "created_at": now_iso(),
+            })
+            created += 1
+    return {"created": created, "skipped": skipped}

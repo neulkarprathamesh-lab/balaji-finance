@@ -225,17 +225,27 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 11) — Publish stabilization pass
-- **Fixed** critical backend crash: `server.py:1108` had a docstring on the same line as `async def reseed_receipt_types(...):` causing `IndentationError` on line 1109. Restored newline; backend now starts cleanly and `/api/version` returns 200.
-- **Fixed** frontend `/reports` crash: `Reports.js:20` called undefined `load()` — renamed to existing `run()`. Page now renders KPI cards + filters without tripping the error boundary.
-- **Added** route alias `/dashboard → /` (Navigate) so bookmarks/deep-links don't render an empty Layout shell.
-- **Fixed** React hydration warnings on `Finance.js` and `DayEnd.js` `<select><option>` children — pre-composed labels into single template-literal expressions so the visual-editor no longer injects `<span data-ve-dynamic>` wrappers inside `<option>`.
-- **Verified** by testing_agent iteration_4: 47/47 backend pytest passing (`backend_test.py`, `test_stabilization.py`, `test_undefined_var_fixes.py`), 23/23 authenticated frontend routes rendered clean, RBAC verified for all 4 roles, kiosk public routes render without auth, all offline assets return HTTP 200. Admin PIN in this environment is now `1234`.
-- **Confirmed** Sequence Reset (dual-auth) + Print Preview overlay + Test Print (TEST COPY watermark) that were left in-progress by the previous fork are all wired end-to-end and passing tests.
+## 2026-02-04 (continued 12) — Router Split + Fresh Install Verification
+- **Refactored** `server.py` from a 2095-line monolith into a **49-line bootstrap** + `core.py` (595 lines: DB, models, deps, PIN gates, numbering, seed, quarterly reminders) + 6 domain routers under `/app/backend/routers/`:
+  - `auth.py` (157 lines) — auth/login/logout/me, PIN endpoints, users CRUD, settings, /api/version
+  - `catalog.py` (289 lines) — departments, classes, fee heads, fee structures + bulk import/delete, promotion, rollover, seed-2026, imports history
+  - `students.py` (163 lines) — students CRUD, ledger, siblings, bulk import/delete/reassign
+  - `receipts.py` (327 lines) — receipt-types CRUD + sequence reset + reseed, receipts CRUD + cancel/reprint, adjustments, extensions, reminders
+  - `reports.py` (432 lines) — dashboard, all reports, bus routes, outstanding notices, quarterly cron, public kiosk lookups
+  - `config_io.py` (108 lines) — config export/import, database backups (PIN-gated / dual-auth)
+- All endpoints still under the `/api` prefix. **Zero client changes required.**
+- **Verified**: 47/47 pytest passing on the new structure, 14/14 authenticated endpoints returning 200 on the smoke sweep.
+- **Fresh Install Verification** — since running Windows here isn't possible, we did the strongest equivalent:
+  - Rebuilt the distribution ZIP with the new `core.py` + `routers/` tree, `.env.example` files restored for both backend and frontend, and no build artefacts leaked (no `.venv`, `node_modules`, `build`, `__pycache__`).
+  - **Verified pip install parity**: fresh Linux venv → `pip install -r requirements.txt` clean → `from server import app` reports 88 routes registered.
+  - **Verified yarn build parity**: `yarn build` on the current source completes clean and produces `build/index.html`.
+  - **Hardened `install-main-server.bat`**: auto-generates a 64-char JWT_SECRET via PowerShell instead of leaving the placeholder; explicit error trap on `pip install` and `yarn build`; calls a new `preflight.bat` at the end.
+  - **Added `01-install-main-server/preflight.bat`**: checks .venv present, backend `.env` present, `frontend/build/index.html` exists, MongoDB Windows service registered, and `from server import app` succeeds — printing a clear PASS / FAIL summary. Can be re-run any time.
+  - New ZIP published at `/downloads/BalajiConventFeeSoftware-v1.0.zip` (3.2 MB, 186 files) — verified downloadable end-to-end from the preview URL.
 
 ## Publish Status
-- **Backend**: 100% — 47 pytest passing, no critical/minor issues open.
-- **Frontend**: 100% authenticated routes render clean.
-- **Offline LAN**: verified — no CDN dependencies on the daily flow.
-- **Distribution ZIP**: `/downloads/BalajiConventFeeSoftware-v1.0.zip` published from Admin → Install Package.
+- **Backend**: 100% — 47 pytest passing on the split codebase, 88 routes registered.
+- **Frontend**: 100% — `yarn build` clean, all authenticated routes render.
+- **Offline LAN**: verified — no CDN dependencies.
+- **Distribution ZIP**: v1.0 fresh build, includes preflight self-check + auto JWT generation.
 
