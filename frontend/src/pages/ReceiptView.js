@@ -10,6 +10,50 @@ import { QRCodeSVG } from 'qrcode.react';
 const LOGO = "/school-logo.jpeg";
 const rs = (n) => (n == null || n === '' ? '' : Number(n).toFixed(2));
 
+// Simple CODE128-ish barcode strip from receipt number (visual only, non-scannable)
+const Barcode = ({ text = "" }) => {
+  const bars = [];
+  const s = (text || "").toUpperCase();
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    for (let b = 0; b < 4; b++) {
+      const w = ((c >> b) & 1) ? 2 : 1;
+      const black = ((c >> b) & 1) === 1;
+      bars.push(<div key={`${i}-${b}`} style={{ width: `${w}px`, height: '32px', background: black ? '#000' : '#fff', display:'inline-block' }} />);
+      bars.push(<div key={`${i}-${b}-gap`} style={{ width: '1px', height: '32px', display:'inline-block' }} />);
+    }
+  }
+  return (
+    <div className="text-center">
+      <div className="inline-flex" style={{ letterSpacing: 0 }}>{bars}</div>
+      <div className="font-mono text-[10px] tracking-[0.2em] mt-0.5">{text}</div>
+    </div>
+  );
+};
+
+// Loads the receipt-type record that matches a receipt (by receipt_type_id or number-prefix)
+function useReceiptType(r) {
+  const [rt, setRt] = useState(null);
+  useEffect(() => {
+    if (!r) return;
+    const load = async () => {
+      try {
+        if (r.receipt_type_id) {
+          const { data } = await api.get(`/receipt-types/${r.receipt_type_id}`);
+          setRt(data); return;
+        }
+        const prefix = (r.number || '').split('-')[0];
+        if (!prefix) return;
+        const { data } = await api.get(`/receipt-types?include_disabled=true`);
+        const match = (data || []).find(t => t.code === prefix);
+        if (match) setRt(match);
+      } catch {}
+    };
+    load();
+  }, [r?.id]);
+  return rt;
+}
+
 export default function ReceiptView() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -108,24 +152,50 @@ function Footer({ r }) {
 }
 
 /* ============ Fee Receipt (school/admission/misc/dept/refund) — modern A4 design ============ */
-function FeeReceipt({ r }) {
+function FeeReceiptWithType({ r }) {
+  const rt = useReceiptType(r);
+  const paper = rt?.paper_size || 'A4';
+  const orient = rt?.orientation || 'portrait';
+  const pageCss = paper === 'Thermal80' ? 'size: 80mm auto;' : `size: ${paper} ${orient};`;
+  return (
+    <>
+      <style>{`@media print { @page { ${pageCss} margin: 8mm; } }`}</style>
+      <FeeReceipt r={r} rt={rt} />
+    </>
+  );
+}
+
+function FeeReceipt({ r, rt }) {
   const meta = r.metadata || {};
   const dateStr = new Date(r.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
-  const code = r.department_code || '';
-  const dept_line1 = { EP: 'BALAJI CONVENT', MP: 'BALAJI CONVENT', SEC: 'BALAJI CONVENT SECONDARY SCHOOL', JC: 'BALAJI CONVENT & JR. COLLEGE' }[code] || 'BALAJI CONVENT & JUNIOR COLLEGE';
-  const dept_line2 = { EP: 'ENGLISH PRIMARY SCHOOL', MP: 'MARATHI PRIMARY SCHOOL', SEC: 'SELF FINANCING', JC: 'ARTS, COMMERCE, SCIENCE & BI-FOCAL' }[code] || '';
+  const code = r.department_code || (r.number||'').split('-')[0] || '';
+  const dept_line1 = rt?.name?.toUpperCase() || { EP: 'BALAJI CONVENT', MP: 'BALAJI CONVENT', SEC: 'BALAJI CONVENT SECONDARY SCHOOL', JC: 'BALAJI CONVENT & JR. COLLEGE' }[code] || 'BALAJI CONVENT & JUNIOR COLLEGE';
+  const dept_line2 = rt?.department_name || { EP: 'ENGLISH PRIMARY SCHOOL', MP: 'MARATHI PRIMARY SCHOOL', SEC: 'SELF FINANCING', JC: 'ARTS, COMMERCE, SCIENCE & BI-FOCAL' }[code] || '';
   const total = Number(r.total || 0);
   const paid = Number(r.total || 0);
   const balance = 0;
+  const F = rt?.fields || {}; // field-visibility map; if rt not loaded, everything shows (default true)
+  const show = (key) => F[key] !== false; // default true when rt missing or key absent
+  const qrOn = rt ? (rt.qr_enabled !== false) : true;
+  const barcodeOn = !!rt?.barcode_enabled;
+  const wmOn = !!rt?.watermark_enabled;
+  const wmText = rt?.watermark_text || 'OFFICIAL';
 
   return (
-    <div className="text-slate-900 text-[13px]">
-      {/* NAVY BRAND BAND (matches cashier UI) */}
-      <div className="bg-slate-900 text-white flex items-center justify-between px-4 py-2 -mx-6 -mt-6 mb-4 print:mx-0 print:mt-0">
+    <div className="text-slate-900 text-[13px] relative">
+      {/* WATERMARK */}
+      {wmOn && (
+        <div aria-hidden className="absolute inset-0 pointer-events-none flex items-center justify-center print:flex" style={{ zIndex: 0 }}>
+          <div className="font-heading font-black text-[120px] tracking-tighter rotate-[-24deg] opacity-[0.06] select-none text-slate-900">{wmText}</div>
+        </div>
+      )}
+
+      {/* NAVY BRAND BAND */}
+      <div className="relative bg-slate-900 text-white flex items-center justify-between px-4 py-2 -mx-6 -mt-6 mb-4 print:mx-0 print:mt-0">
         <div className="flex items-center gap-2.5">
           <img src={LOGO} alt="logo" className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700" />
           <div className="leading-tight">
-            <div className="font-heading font-semibold text-[13px]">Balaji Convent · School Receipt Manager</div>
+            <div className="font-heading font-semibold text-[13px]">{rt?.name || 'Balaji Convent · School Receipt Manager'}</div>
             <div className="text-[9px] uppercase tracking-widest text-slate-300">Official Fee Receipt</div>
           </div>
         </div>
@@ -135,16 +205,20 @@ function FeeReceipt({ r }) {
         </div>
       </div>
 
+      {/* Optional custom header text */}
+      {rt?.header_text && (
+        <div className="relative text-center text-[11px] font-semibold uppercase tracking-widest text-slate-700 pb-2 border-b border-slate-200 mb-2">{rt.header_text}</div>
+      )}
+
       {/* HEADER */}
-      <div className="grid grid-cols-12 gap-3 pb-4 border-b-2 border-slate-900">
+      <div className="relative grid grid-cols-12 gap-3 pb-4 border-b-2 border-slate-900">
         <div className="col-span-6 flex items-start gap-3">
           <img src={LOGO} alt="logo" className="w-20 h-20 rounded-full object-cover ring-1 ring-slate-300" />
           <div>
             <div className="font-heading font-black text-xl tracking-tight leading-tight uppercase">{dept_line1}</div>
             <div className="text-[13px] font-bold tracking-wide uppercase text-slate-800">BUTIBORI, NAGPUR</div>
             <div className="text-[10px] text-slate-600 mt-0.5 leading-tight">{dept_line2}</div>
-            <div className="text-[10px] text-slate-600">NURSERY TO CLASS 10 (ENGLISH · SEMI ENGLISH · MARATHI)</div>
-            <div className="text-[10px] text-slate-600">JUNIOR COLLEGE (SCIENCE · COMMERCE · ARTS) · STATE PATTERN</div>
+            {rt?.description && <div className="text-[10px] text-slate-600">{rt.description}</div>}
           </div>
         </div>
         <div className="col-span-3 text-center border-x border-slate-300 px-3">
@@ -158,34 +232,39 @@ function FeeReceipt({ r }) {
           <div className="font-mono font-bold text-slate-900 text-[13px]">{r.number}</div>
           <div className="text-slate-500 uppercase tracking-widest text-[9px] mt-1">Date</div>
           <div className="font-mono font-semibold">{dateStr}</div>
-          <div className="text-slate-500 uppercase tracking-widest text-[9px] mt-1">Academic Year</div>
-          <div className="font-mono font-semibold">{r.academic_year}</div>
-          <div className="flex justify-end mt-1"><QRCodeSVG value={`${window.location.origin}/lookup/${r.number}`} size={56} level="M" includeMargin={false} /></div>
+          {show('academic_year') && <>
+            <div className="text-slate-500 uppercase tracking-widest text-[9px] mt-1">Academic Year</div>
+            <div className="font-mono font-semibold">{r.academic_year}</div>
+          </>}
+          {qrOn && <div className="flex justify-end mt-1"><QRCodeSVG value={`${window.location.origin}/lookup/${r.number}`} size={56} level="M" includeMargin={false} /></div>}
         </div>
       </div>
 
       {/* STATUS BANNER */}
-      {r.status === 'cancelled' && <div className="text-center text-red-600 font-bold text-sm my-2">*** CANCELLED ***</div>}
-      {r.reprint_count > 0 && <div className="text-center text-amber-700 font-semibold text-[11px] my-1">DUPLICATE · Reprint #{r.reprint_count}</div>}
+      {r.status === 'cancelled' && <div className="relative text-center text-red-600 font-bold text-sm my-2">*** CANCELLED ***</div>}
+      {r.reprint_count > 0 && <div className="relative text-center text-amber-700 font-semibold text-[11px] my-1">DUPLICATE · Reprint #{r.reprint_count}</div>}
 
       {/* DETAILS */}
-      <div className="mt-3 border border-slate-300">
+      <div className="relative mt-3 border border-slate-300">
         <div className="bg-slate-100 border-b border-slate-300 text-center py-1 text-[11px] font-bold tracking-widest">DETAILS</div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 p-3 text-[12px]">
           <Row label="STUDENT NAME" value={r.student_snapshot?.name || r.payer_name} />
-          <Row label="FATHER / GUARDIAN" value={meta.guardian_name} />
-          <Row label="ADMISSION NO." value={r.student_snapshot?.admission_no} mono />
-          <Row label="MOTHER NAME" value={meta.mother_name} />
-          <Row label="CLASS / DIVISION" value={meta.class_name} />
-          <Row label="CONTACT NO." value={meta.guardian_mobile} mono />
-          <Row label="ROLL NO." value={meta.roll_no} />
+          {show('parent_name') && <Row label="FATHER / GUARDIAN" value={meta.guardian_name} />}
+          {show('admission_no') && <Row label="ADMISSION NO." value={r.student_snapshot?.admission_no} mono />}
+          {show('parent_name') && <Row label="MOTHER NAME" value={meta.mother_name} />}
+          {show('class') && <Row label="CLASS / DIVISION" value={meta.class_name} />}
+          {show('mobile') && <Row label="CONTACT NO." value={meta.guardian_mobile} mono />}
+          {show('roll_no') && <Row label="ROLL NO." value={meta.roll_no} />}
           <Row label="MEDIUM" value={meta.medium} />
-          <Row label="SESSION" value={meta.session || r.academic_year} />
-          <Row label="DEPARTMENT" value={r.department_name} />
+          {show('session') && <Row label="SESSION" value={meta.session || r.academic_year} />}
+          {show('department') && <Row label="DEPARTMENT" value={rt?.department_name || r.department_name} />}
           {code === 'JC' && <Row label="FACULTI" value={meta.faculti} />}
           <Row label="PATTERN" value={meta.pattern || 'State Pattern'} />
         </div>
       </div>
+
+      {/* Barcode strip below details if enabled */}
+      {barcodeOn && <div className="relative mt-3"><Barcode text={r.number} /></div>}
 
       {/* FEE TABLE + AMOUNT RECEIVED SIDEBAR */}
       <div className="grid grid-cols-12 gap-3 mt-3">
@@ -221,18 +300,18 @@ function FeeReceipt({ r }) {
         </div>
 
         <div className="col-span-4 border border-slate-400">
-          <div className="p-3 border-b border-slate-300">
+          {show('amount_in_words') && (<div className="p-3 border-b border-slate-300">
             <div className="text-[9px] uppercase tracking-widest text-slate-500">Amount in Words</div>
             <div className="text-[12px] font-semibold mt-0.5">{r.amount_in_words}</div>
-          </div>
-          <div className="p-3 border-b border-slate-300">
+          </div>)}
+          {show('payment_mode') && (<div className="p-3 border-b border-slate-300">
             <div className="text-[9px] uppercase tracking-widest text-slate-500">Payment Mode</div>
             <div className="text-[13px] font-semibold capitalize">{r.payment_mode}</div>
-          </div>
-          <div className="p-3 border-b border-slate-300">
+          </div>)}
+          {show('transaction_id') && (<div className="p-3 border-b border-slate-300">
             <div className="text-[9px] uppercase tracking-widest text-slate-500">Transaction ID</div>
             <div className="text-[11px] font-mono">{r.payment_reference || `${r.payment_mode.toUpperCase()}/${r.number}`}</div>
-          </div>
+          </div>)}
           <div className="p-3 bg-slate-900 text-white text-center">
             <div className="text-[9px] uppercase tracking-widest text-slate-300">Amount Received</div>
             <div className="font-heading text-2xl font-bold font-mono tabular mt-0.5">₹ {total.toFixed(2)}</div>
@@ -241,31 +320,37 @@ function FeeReceipt({ r }) {
       </div>
 
       {/* NOTES + SIGNATURES */}
-      <div className="grid grid-cols-3 gap-6 mt-4 text-[11px]">
+      {(rt?.signature_area_enabled !== false) && (
+      <div className="relative grid grid-cols-3 gap-6 mt-4 text-[11px]">
         <div>
           <div className="font-bold text-[10px] tracking-widest text-slate-600 mb-1">NOTES:</div>
           <ul className="text-slate-600 space-y-0.5 list-disc pl-4">
-            <li>This is a computer generated receipt.</li>
+            <li>{rt?.computer_generated_note || 'This is a computer generated receipt.'}</li>
             <li>No signature is required.</li>
             <li>Fees once paid will not be refunded.</li>
             <li>Please preserve this receipt for your records.</li>
           </ul>
         </div>
-        <div className="text-center pt-6">
+        {show('cashier_name') && (<div className="text-center pt-6">
           <div className="border-t border-slate-500 pt-1 text-[10px] tracking-widest">RECEIVED BY</div>
           <div className="text-[10px] text-slate-600">{r.cashier_name}</div>
-        </div>
-        <div className="text-center pt-6">
+        </div>)}
+        {show('authorized_by') && (<div className="text-center pt-6">
           <div className="border-t border-slate-500 pt-1 text-[10px] tracking-widest">AUTHORIZED BY</div>
-        </div>
-      </div>
+        </div>)}
+      </div>)}
 
       {/* FOOTER */}
-      <div className="mt-4 pt-2 border-t border-slate-300 flex justify-between items-center text-[10px] text-slate-600">
+      <div className="relative mt-4 pt-2 border-t border-slate-300 flex justify-between items-center text-[10px] text-slate-600">
         <span>📍 Butibori, Nagpur — 441122, Maharashtra</span>
         <span>📞 07103-234567</span>
         <span>✉ info@balajiconventbutibori.edu.in</span>
       </div>
+
+      {/* Optional custom footer text */}
+      {rt?.footer_text && (
+        <div className="relative text-center text-[10px] italic text-slate-600 mt-2 border-t border-slate-200 pt-1">{rt.footer_text}</div>
+      )}
     </div>
   );
 }

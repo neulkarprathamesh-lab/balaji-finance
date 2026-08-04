@@ -211,5 +211,19 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - New backend endpoints: `GET /api/students/{id}/siblings`, `GET /api/imports/history`. Both used exclusively by the new UI.
 - **P1** — Print A4 receipt to inherit the navy header/branding of the new cashier UI (currently uses the existing A4 layout — good, but could tighten header parity)
 - **P1** — "Import History" page listing past batches with counts, user, timestamp, and per-row undo button
+
+### 2026-02-04 (continued 10) — Print Template Renderer wired
+- `ReceiptView.js` now dynamically loads the matching receipt-type via `useReceiptType()` (by `receipt_type_id`, else by number prefix e.g. `EP-2026-000003` → `EP` type) and applies every configured toggle to the printed A4:
+  - **Paper size + orientation** — `@media print { @page { size: A4|A5|Thermal80 portrait|landscape; margin: 8mm; } }` scoped per receipt so preview = PDF export = physical print (WYSIWYG).
+  - **Header / footer text** — extra lines rendered above the header block and below the footer.
+  - **Watermark** — faint diagonal overlay text (configurable text like `ORIGINAL` / `DUPLICATE`), shown at 0.06 opacity so it doesn't compete with the receipt content.
+  - **QR / Barcode** — QR toggle hides the corner QR; barcode toggle renders a stylized CODE128-look strip with the receipt number below.
+  - **Signature area** — hides the entire NOTES + RECEIVED BY + AUTHORIZED BY row when disabled.
+  - **Computer-generated note** — configurable text swapped into the first bullet of the NOTES list.
+  - **All 16 field toggles** (Admission-No, Roll-No, Parent Name, Mobile, Class, Division, Session, Department, Academic Year, Fee Head, Amount-in-Words, Payment Mode, Transaction ID, Cashier Name, Authorized By, Remarks) — each row / block is conditionally rendered.
+  - **Dynamic school + department names** — pulled from the receipt-type record so admins can rename EP → "Balaji Convent English Primary School" or add a new type entirely without code changes.
+- Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
+- The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
+
 - **P2** — Persist an "Amount Paying" preset value from the last unpaid quarter for one-click collect
 - **P2** — Attach fee-structure preview (first 3 rows) inside the mapping panel before import
