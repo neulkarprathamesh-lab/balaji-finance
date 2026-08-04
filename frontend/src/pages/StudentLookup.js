@@ -42,26 +42,62 @@ export default function StudentLookup() {
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto p-6 space-y-4">
+      <div className="max-w-3xl mx-auto p-6 space-y-4">
         {children.length > 1 && (
           <div className="bg-emerald-50 border-2 border-emerald-500 rounded p-4">
-            <div className="text-[11px] uppercase tracking-widest text-emerald-800 font-bold mb-1">Family Ledger · {children.length} children</div>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="flex justify-between"><span className="text-slate-600">Combined Total Fee</span><span className="font-mono tabular font-semibold">{inr(combined.total_fee)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-600">Combined Paid</span><span className="font-mono tabular text-emerald-700 font-semibold">{inr(combined.paid)}</span></div>
-              <div className="col-span-2 mt-1 pt-2 border-t border-emerald-200 flex justify-between"><span className="text-slate-600 font-bold">Combined Outstanding</span><span className={`font-mono tabular text-xl font-bold ${combined.outstanding > 0 ? 'text-red-700' : 'text-emerald-700'}`}>{inr(combined.outstanding)}</span></div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[11px] uppercase tracking-widest text-emerald-800 font-bold">Family Ledger · {children.length} children</div>
+              <div className="text-[11px] text-emerald-700">Guardian: <span className="font-mono">{children[0]?.student?.guardian_mobile || '—'}</span></div>
             </div>
-          </div>
-        )}
-
-        {children.length > 1 && (
-          <div className="flex gap-2 flex-wrap">
-            {children.map((c, i) => (
-              <button key={c.student.admission_no} onClick={()=>setActive(i)} className={`px-3 py-2 rounded text-sm border ${i===active ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-300 hover:bg-slate-50'}`}>
-                <div className="font-semibold">{c.student.name}</div>
-                <div className="text-[10px] opacity-80 font-mono">{c.student.admission_no}</div>
-              </button>
-            ))}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-3">
+              <div className="bg-white/60 rounded px-3 py-2">
+                <div className="text-[10px] uppercase tracking-widest text-slate-600">Total Fee</div>
+                <div className="font-mono tabular font-semibold text-slate-800">{inr(combined.total_fee)}</div>
+              </div>
+              <div className="bg-white/60 rounded px-3 py-2">
+                <div className="text-[10px] uppercase tracking-widest text-slate-600">Paid</div>
+                <div className="font-mono tabular font-semibold text-emerald-700">{inr(combined.paid)}</div>
+              </div>
+              <div className="bg-white/60 rounded px-3 py-2">
+                <div className="text-[10px] uppercase tracking-widest text-slate-600">Concession</div>
+                <div className="font-mono tabular font-semibold text-slate-700">{inr(combined.adjusted || 0)}</div>
+              </div>
+              <div className={`rounded px-3 py-2 ${combined.outstanding > 0 ? 'bg-red-50 ring-1 ring-red-300' : 'bg-emerald-100'}`}>
+                <div className={`text-[10px] uppercase tracking-widest ${combined.outstanding > 0 ? 'text-red-700' : 'text-emerald-800'}`}>Family Outstanding</div>
+                <div className={`font-mono tabular text-xl font-bold ${combined.outstanding > 0 ? 'text-red-700' : 'text-emerald-700'}`}>{inr(combined.outstanding)}</div>
+              </div>
+            </div>
+            {/* Per-child mini rows */}
+            <div className="space-y-1.5 pt-2 border-t border-emerald-200">
+              <div className="text-[10px] uppercase tracking-widest text-emerald-800 font-bold mb-1.5">Per Child</div>
+              {children.map((c, i) => {
+                const out = c.ledger.outstanding || 0;
+                const paid = out <= 0;
+                return (
+                  <button key={c.student.admission_no} onClick={()=>setActive(i)}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm border transition-colors text-left ${i===active ? 'bg-white border-emerald-500 shadow-sm' : 'bg-white/70 border-emerald-200 hover:bg-white'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold ${paid ? 'bg-emerald-600 text-white' : 'bg-red-100 text-red-800'}`}>{(c.student.name || '').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}</div>
+                      <div>
+                        <div className="font-medium text-slate-900 leading-tight">{c.student.name}</div>
+                        <div className="text-[10px] font-mono text-slate-500">{c.student.admission_no} · {c.student.class_name || '—'}</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      {paid ? (
+                        <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-100 border border-emerald-300 rounded-full px-2 py-0.5">✓ Paid up</span>
+                      ) : (
+                        <div>
+                          <div className="text-[10px] uppercase text-red-700 tracking-widest">Due</div>
+                          <div className="font-mono tabular font-bold text-red-700">{inr(out)}</div>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-emerald-800 mt-2 flex items-center gap-1">Tap a child above to see their detailed ledger below.</div>
           </div>
         )}
 

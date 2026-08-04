@@ -98,6 +98,11 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
   - Payment mode selector: **Cash / UPI / Card** only (Bank Transfer removed per user)
   - Amount Received field auto-reflects allocated total
   - Big green "Create & Print Receipt" + secondary "Save & Continue Later"
+
+### 2026-02-04 (continued 2) — Kiosk + Receipts follow-ups
+- **Kiosk Sibling Combined**: The public `/parent/:adm` page now leads with a richer Family Ledger card — Total / Paid / Concession / Family Outstanding tiles plus a per-child mini list showing each sibling's initials avatar, name, admission no, class, and Due amount (or a green "✓ Paid up" pill). Parents see the whole family bill in one glance the moment any child's QR is scanned.
+- **Receipt Search Chips**: `/receipts` now has quick-view chips at the top — Today, This Week, This Month, Cancelled, Clear. Selecting a chip auto-fills the date range (or filters status). Header dynamically updates to `N receipts · ₹X collected` (cancelled receipts excluded from the collected total).
+
   - Bottom status strip: "Receipt number will be generated centrally"
 - Preserved the original comprehensive form (all 9 receipt types including Bus/Voucher/Refund) at `/new-receipt-advanced` via new `NewReceiptAdvanced.js`, reachable via the header link.
 - **ImportExcel.js**: uses a client-generated `batch_id` per file so undo is atomic; supports undo for **both** students and fee structures (uses the new `/bulk-delete` endpoints).
