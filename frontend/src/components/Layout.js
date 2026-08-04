@@ -9,6 +9,7 @@ import {
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['*'] },
   { to: '/students', label: 'Students', icon: Users, roles: ['*'] },
+  { to: '/import-excel', label: 'Excel Import', icon: FileText, roles: ['administrator','manager','accountant'] },
   { to: '/new-receipt', label: 'New Receipt', icon: Receipt, roles: ['*'] },
   { to: '/receipts', label: 'Receipts', icon: FileText, roles: ['*'] },
   { to: '/adjustments', label: 'Fee Adjustments', icon: FileEdit, roles: ['*'] },
