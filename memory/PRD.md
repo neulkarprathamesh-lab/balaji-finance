@@ -191,6 +191,21 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **Setup Wizard** at `/setup-wizard` (admin-only nav item) — 8-step checklist (change admin password, school info, staff logins, static IP, seed fees, backups, client-PC shortcut, first receipt) with progress bar, LocalStorage persistence, and one-click CTA to the relevant page.
 - **Signed Update Feed** — `public/downloads/version.json` is fetched on every layout mount. If `version !== CURRENT_VERSION` (constant `1.0.0` in Layout.js), an amber banner appears for administrators with the version, release date, notes, a **Download** button and a **Dismiss** action (dismissal stored in LocalStorage per-version so it reappears on the next release).
 
+
+### 2026-02-04 (continued 9) — Backup + Receipt-Type full editor
+**One-click Backup Before Update**
+- New `_create_backup_zip()` helper dumps every collection to a ZIP under `/app/backups/`, computes a SHA-256 checksum, verifies via `ZipFile.testzip()`, and records `id/filename/size/collections/checksum/kind/created_at/created_by` in a `backups` collection.
+- **Auto-backup**: `POST /api/config/import?replace=true` now creates a `pre-import` backup BEFORE touching any collection. If the backup fails the import is refused (500).
+- Manual endpoint `POST /api/config/backup` (PIN-gated) — returns the manifest.
+- Listing `GET /api/config/backups` and streaming download `GET /api/config/backups/{id}/download` (PIN-gated).
+- Frontend: new **Database Backups** panel on `/config-io` with **Backup Now (PIN)** button, table (Created / Kind pill / Filename / Size / Collections / By / Download). Import-summary card also shows the auto-backup filename + size + first 16 chars of the SHA-256.
+- Verified: manual backup created a 14.9 KB ZIP covering 16 collections with a valid sha256 checksum, file present at `/app/backups/balaji-manual-2026-08-04_134803-v1.0.0.zip`.
+
+**Phase 2 close-out — full Receipt Type editor**
+- Backend `ReceiptTypeIn` extended with: `paper_size (A4/A5/Thermal80)`, `orientation (portrait/landscape)`, `header_text`, `footer_text`, `watermark_text`, `watermark_enabled`, `barcode_enabled`, `qr_enabled`, `signature_area_enabled`, `computer_generated_note`, `starting_number`, `current_number`, `auto_reset_yearly`, and a `fields` dict with 16 per-type toggles (Admission-No, Roll-No, Parent Name, Mobile, Class, Division, Department, Academic Year, Session, Fee Head, Amount in Words, Payment Mode, Transaction ID, Cashier Name, Authorized By, Remarks).
+- Frontend edit modal now has 4 tabs: **General / Printing / Numbering / Fields**. Every save requires the Admin PIN. Manual reset of the current sequence flagged as Phase 3 (dual-auth required).
+- Verified: PATCH to `EP` — paper=A4/landscape, watermark on "OFFICIAL", `fields.authorized_by=true` — all persisted correctly.
+
 - **Amount Suggestions**: On student load, `Amount Paying` pre-fills with the top-priority pending head's outstanding, and a "Next Quarter" chip refills it any time.
 - **Sibling Split**: When the loaded student has siblings on the same guardian mobile, an amber banner appears ("N sibling(s) on same guardian mobile — <Names>") with an "Include siblings in one payment" toggle. When on, all siblings' pending heads merge into one priority-sorted list, and each row is tagged with the student name. Submit creates **one receipt per student** in a single flow, with a family split preview in the right rail.
 - New backend endpoints: `GET /api/students/{id}/siblings`, `GET /api/imports/history`. Both used exclusively by the new UI.

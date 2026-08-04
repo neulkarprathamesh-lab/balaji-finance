@@ -111,21 +111,43 @@ class DepartmentIn(BaseModel):
     academic_year: str = "2026-27"
 
 class ReceiptTypeIn(BaseModel):
-    code: str  # short prefix used in receipt numbers, e.g. EP, MP, EMP, SEC, JC, JCACS, BUS, EMJC, DV
-    name: str  # long name, e.g. "Balaji Convent English Primary School"
-    department_name: Optional[str] = None  # printed on receipt (may differ from Department master)
-    department_id: Optional[str] = None  # links to departments collection when applicable
+    code: str
+    name: str
+    department_name: Optional[str] = None
+    department_id: Optional[str] = None
     category: Literal["school","bus","finance","misc"] = "school"
     description: Optional[str] = None
-    icon: Optional[str] = None  # lucide-react icon name (frontend)
+    icon: Optional[str] = None
     display_order: int = 100
     enabled: bool = True
     archived: bool = False
-    tabs: List[str] = ["school","installment","misc"]  # tabs visible in the cashier UI
+    tabs: List[str] = ["school","installment","misc"]
     default_payment_modes: List[str] = ["cash","upi","card"]
     print_template: str = "a4-navy"
     report_category: Optional[str] = None
     notes: Optional[str] = None
+    # Phase 2 — Print settings
+    paper_size: Literal["A4","A5","Thermal80"] = "A4"
+    orientation: Literal["portrait","landscape"] = "portrait"
+    header_text: Optional[str] = None
+    footer_text: Optional[str] = None
+    watermark_text: Optional[str] = None
+    watermark_enabled: bool = False
+    barcode_enabled: bool = False
+    qr_enabled: bool = True
+    signature_area_enabled: bool = True
+    computer_generated_note: str = "This is a computer-generated receipt."
+    # Numbering
+    starting_number: int = 1
+    current_number: Optional[int] = None
+    auto_reset_yearly: bool = True
+    # Per-type field toggles
+    fields: Dict[str, bool] = {
+        "admission_no": True, "roll_no": False, "parent_name": True, "mobile": True,
+        "class": True, "division": False, "department": True, "academic_year": True,
+        "session": False, "fee_head": True, "amount_in_words": True, "payment_mode": True,
+        "transaction_id": True, "cashier_name": True, "authorized_by": False, "remarks": True,
+    }
 
 class ClassIn(BaseModel):
     department_id: str
@@ -809,6 +831,59 @@ CONFIG_COLLECTIONS = [
     "settings", "bus_routes",
 ]
 
+BACKUP_DIR = Path("/app/backups")
+
+async def _create_backup_zip(kind: str, actor_name: str) -> Dict[str, Any]:
+    """Dumps every collection as JSON into a ZIP, records metadata, verifies integrity."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+    bid = gen_id()
+    fname = f"balaji-{kind}-{ts}-v1.0.0.zip"
+    path = BACKUP_DIR / fname
+    all_colls = list(set(CONFIG_COLLECTIONS + ["users","receipts","students","adjustments","extensions","reminders","import_batches","audit","counters"]))
+    manifest = {"id": bid, "kind": kind, "created_at": now_iso(), "created_by": actor_name, "app_version":"1.0.0", "database_version":"1", "collections": []}
+    import hashlib
+    hasher = hashlib.sha256()
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for coll in sorted(all_colls):
+            rows = await db[coll].find({}, {"_id":0}).to_list(200000)
+            payload = _json.dumps(rows, default=str)
+            zf.writestr(f"{coll}.json", payload)
+            manifest["collections"].append({"name": coll, "count": len(rows), "bytes": len(payload)})
+            hasher.update(payload.encode())
+        zf.writestr("manifest.json", _json.dumps(manifest, indent=2, default=str))
+    # Verify by re-opening
+    with zipfile.ZipFile(path, "r") as zf:
+        bad = zf.testzip()
+        if bad: raise RuntimeError(f"Backup verification failed at {bad}")
+    size = path.stat().st_size
+    manifest["size"] = size
+    manifest["filename"] = fname
+    manifest["path"] = str(path)
+    manifest["checksum_sha256"] = hasher.hexdigest()
+    await db.backups.insert_one(manifest.copy())
+    return manifest
+
+@api.post("/config/backup")
+async def create_manual_backup(user = Depends(require_admin_pin)):
+    m = await _create_backup_zip("manual", user["name"])
+    await audit(user, "backup_create", "system", m["id"], {"kind": m["kind"], "size": m["size"]})
+    return {k:v for k,v in m.items() if k != "_id"}
+
+@api.get("/config/backups")
+async def list_backups(limit: int = 50, user = Depends(require_roles("administrator"))):
+    return await db.backups.find({}, {"_id":0}).sort("created_at", -1).limit(limit).to_list(limit)
+
+@api.get("/config/backups/{bid}/download")
+async def download_backup(bid: str, user = Depends(require_admin_pin)):
+    doc = await db.backups.find_one({"id": bid}, {"_id":0})
+    if not doc: raise HTTPException(404, "Backup not found")
+    p = Path(doc["path"])
+    if not p.exists(): raise HTTPException(410, "Backup file missing on disk")
+    await audit(user, "backup_download", "system", bid, {"filename": doc["filename"]})
+    return StreamingResponse(open(p, "rb"), media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}"'})
+
 @api.get("/config/export")
 async def export_config(user = Depends(require_admin_pin)):
     """Export school configuration as a ZIP (JSON per collection). Passwords & PINs are stripped from users."""
@@ -852,7 +927,15 @@ async def import_config(
     if "manifest.json" not in names:
         raise HTTPException(400, "manifest.json missing — this is not a Balaji config ZIP")
     manifest = _json.loads(zf.read("manifest.json").decode())
-    summary: Dict[str, Any] = {"imported": {}}
+    # SAFETY: Auto-backup before REPLACE-mode import
+    pre_backup = None
+    if replace:
+        try:
+            pre_backup = await _create_backup_zip("pre-import", user["name"])
+            await audit(user, "backup_auto", "system", pre_backup["id"], {"reason": "pre_import_replace", "size": pre_backup["size"]})
+        except Exception as e:
+            raise HTTPException(500, f"Pre-import backup failed — refusing to proceed: {e}")
+    summary: Dict[str, Any] = {"imported": {}, "pre_backup": pre_backup}
     for coll in CONFIG_COLLECTIONS + ["users"]:
         fn = f"{coll}.json"
         if fn not in names: continue
@@ -944,7 +1027,9 @@ async def create_receipt_type(body: ReceiptTypeIn, user = Depends(require_admin_
 async def update_receipt_type(rtid: str, body: Dict[str, Any], user = Depends(require_admin_pin)):
     existing = await db.receipt_types.find_one({"id": rtid})
     if not existing: raise HTTPException(404, "Not found")
-    allowed = {"name","department_name","department_id","category","description","icon","display_order","enabled","tabs","default_payment_modes","print_template","report_category","notes","archived"}
+    allowed = {"name","department_name","department_id","category","description","icon","display_order","enabled","tabs","default_payment_modes","print_template","report_category","notes","archived",
+               "paper_size","orientation","header_text","footer_text","watermark_text","watermark_enabled","barcode_enabled","qr_enabled","signature_area_enabled","computer_generated_note",
+               "starting_number","current_number","auto_reset_yearly","fields"}
     upd = {k: v for k, v in body.items() if k in allowed}
     # Special: changing prefix code is sensitive — audit-log heavy but allow admin
     if "code" in body and body["code"]:

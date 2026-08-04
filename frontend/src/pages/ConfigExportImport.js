@@ -3,16 +3,24 @@ import { toast } from 'sonner';
 import api from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
 import AdminPinPrompt from '@/components/AdminPinPrompt';
-import { Download, Upload, Shield, PackageOpen, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Download, Upload, Shield, PackageOpen, CheckCircle2, AlertTriangle, HardDrive, RefreshCw } from 'lucide-react';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+
+const fmtBytes = (n) => n < 1024 ? `${n} B` : n < 1024*1024 ? `${(n/1024).toFixed(1)} KB` : `${(n/1048576).toFixed(2)} MB`;
 
 export default function ConfigExportImport() {
   const [prompt, setPrompt] = useState(null);
   const [importResult, setImportResult] = useState(null);
   const [version, setVersion] = useState(null);
   const [replace, setReplace] = useState(false);
-  useEffect(() => { api.get('/version').then(r => setVersion(r.data)).catch(()=>{}); }, []);
+  const [backups, setBackups] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.get('/version').then(r => setVersion(r.data)).catch(()=>{});
+    loadBackups();
+  }, []);
+  const loadBackups = () => api.get('/config/backups').then(r => setBackups(r.data)).catch(()=>{});
 
   const doExport = () => setPrompt({
     mode: 'pin', title: 'Export School Configuration',
@@ -113,6 +121,11 @@ export default function ConfigExportImport() {
               <CheckCircle2 className="w-5 h-5 text-emerald-600" />
               <div className="font-heading font-semibold">Import Summary</div>
             </div>
+            {importResult.summary?.pre_backup && (
+              <div className="mb-3 p-2 bg-emerald-50 border border-emerald-200 rounded text-[12px] text-emerald-900">
+                <b>Auto-backup created before import</b>: <code className="font-mono">{importResult.summary.pre_backup.filename}</code> · {fmtBytes(importResult.summary.pre_backup.size)} · sha256 <span className="font-mono text-[10px]">{importResult.summary.pre_backup.checksum_sha256?.slice(0,16)}…</span>
+              </div>
+            )}
             <div className="text-[11px] text-slate-500 mb-2">From: {importResult.manifest?.exported_by} on {importResult.manifest?.exported_at?.slice(0,10)} · App v{importResult.manifest?.app_version} · Mode: {importResult.replace_mode ? 'REPLACE' : 'MERGE'}</div>
             <table className="w-full text-sm border border-slate-200">
               <thead className="bg-slate-50 text-[11px] uppercase text-slate-600"><tr className="text-left"><th className="px-2 py-1.5">Collection</th><th className="px-2 py-1.5 text-right">Added</th><th className="px-2 py-1.5 text-right">Updated</th><th className="px-2 py-1.5 text-right">Total in File</th></tr></thead>
@@ -127,6 +140,54 @@ export default function ConfigExportImport() {
             </table>
           </div>
         )}
+
+        {/* Backups panel */}
+        <div className="bg-white border border-slate-200 rounded-lg p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-slate-900 text-white flex items-center justify-center"><HardDrive className="w-5 h-5" /></div>
+              <div>
+                <div className="font-heading font-semibold text-lg">Database Backups</div>
+                <div className="text-[12px] text-slate-600">Full-DB ZIP dumps · auto-created before any Replace-mode import · verified for integrity</div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={loadBackups} className="h-9 px-3 border border-slate-300 rounded text-sm hover:bg-slate-50 flex items-center gap-1.5"><RefreshCw className="w-4 h-4" /> Refresh</button>
+              <button data-testid="cfg-backup-now" disabled={busy} onClick={()=>setPrompt({ mode:'pin', title:'Create Backup Now',
+                message:'Dumps every collection into a verified ZIP under /app/backups.',
+                onOk: async (h) => { setBusy(true); try { const {data} = await api.post('/config/backup', {}, { headers: h }); toast.success(`Backup ${data.filename} created · ${fmtBytes(data.size)}`); loadBackups(); } catch { toast.error('Backup failed'); } finally { setBusy(false); } }
+              })} className="h-9 px-3 bg-slate-900 text-white rounded text-sm flex items-center gap-1.5"><HardDrive className="w-4 h-4" /> Backup Now (PIN)</button>
+            </div>
+          </div>
+          <table className="w-full text-sm border border-slate-200">
+            <thead className="bg-slate-50 text-[11px] uppercase text-slate-600"><tr className="text-left"><th className="px-2 py-1.5">Created</th><th className="px-2 py-1.5">Kind</th><th className="px-2 py-1.5">Filename</th><th className="px-2 py-1.5 text-right">Size</th><th className="px-2 py-1.5">Collections</th><th className="px-2 py-1.5">By</th><th></th></tr></thead>
+            <tbody>
+              {backups.length === 0 && <tr><td colSpan="7" className="p-4 text-center text-slate-500 text-[13px]">No backups yet — click <b>Backup Now</b> to create the first one.</td></tr>}
+              {backups.map(b => (
+                <tr key={b.id} className="border-t border-slate-100 hover:bg-slate-50">
+                  <td className="px-2 py-1.5 text-[12px]">{new Date(b.created_at).toLocaleString('en-IN')}</td>
+                  <td className="px-2 py-1.5"><span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${b.kind==='pre-import' ? 'bg-amber-100 text-amber-800' : b.kind==='manual' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-700'}`}>{b.kind}</span></td>
+                  <td className="px-2 py-1.5 font-mono text-[11px] truncate max-w-xs">{b.filename}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-[12px]">{fmtBytes(b.size || 0)}</td>
+                  <td className="px-2 py-1.5 text-[11px] text-slate-600">{b.collections?.length || 0}</td>
+                  <td className="px-2 py-1.5 text-[12px]">{b.created_by}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <button data-testid={`cfg-backup-dl-${b.id}`} onClick={()=>setPrompt({ mode:'pin', title:'Download Backup', message:`Download ${b.filename}?`,
+                      onOk: async (h) => {
+                        const token = localStorage.getItem('bc.token');
+                        const r = await fetch(`${BACKEND}/api/config/backups/${b.id}/download`, { headers: { 'Authorization': `Bearer ${token}`, ...h } });
+                        if (!r.ok) return toast.error('Download failed');
+                        const blob = await r.blob();
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob); a.download = b.filename; a.click();
+                      }
+                    })} className="text-[12px] px-2 py-1 border border-slate-300 rounded hover:bg-white">Download</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       <AdminPinPrompt prompt={prompt} onClose={()=>setPrompt(null)} />
     </>
