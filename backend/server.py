@@ -108,6 +108,23 @@ class DepartmentIn(BaseModel):
     code: str  # used as receipt prefix eg EP, MP, SEC, JC
     academic_year: str = "2026-27"
 
+class ReceiptTypeIn(BaseModel):
+    code: str  # short prefix used in receipt numbers, e.g. EP, MP, EMP, SEC, JC, JCACS, BUS, EMJC, DV
+    name: str  # long name, e.g. "Balaji Convent English Primary School"
+    department_name: Optional[str] = None  # printed on receipt (may differ from Department master)
+    department_id: Optional[str] = None  # links to departments collection when applicable
+    category: Literal["school","bus","finance","misc"] = "school"
+    description: Optional[str] = None
+    icon: Optional[str] = None  # lucide-react icon name (frontend)
+    display_order: int = 100
+    enabled: bool = True
+    archived: bool = False
+    tabs: List[str] = ["school","installment","misc"]  # tabs visible in the cashier UI
+    default_payment_modes: List[str] = ["cash","upi","card"]
+    print_template: str = "a4-navy"
+    report_category: Optional[str] = None
+    notes: Optional[str] = None
+
 class ClassIn(BaseModel):
     department_id: str
     name: str  # e.g. "Class 1", "Class 5"
@@ -721,6 +738,136 @@ async def next_receipt_number(dept_code: str, academic_year: str) -> str:
         doc = await db.counters.find_one({"key": key})
     seq = doc.get("seq", 1) if doc else 1
     return f"{dept_code}-{academic_year.split('-')[0]}-{seq:06d}"
+
+async def next_receipt_number_by_prefix(prefix: str, academic_year: str) -> str:
+    """Prefix-based receipt numbering. Used when a receipt-type overrides the department code."""
+    key = f"RT-{prefix}-{academic_year}"
+    doc = await db.counters.find_one_and_update(
+        {"key": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    seq = doc.get("seq", 1) if doc else 1
+    return f"{prefix}-{academic_year.split('-')[0]}-{seq:06d}"
+
+# ---------------- Receipt Types (DB-backed) ----------------
+DEFAULT_RECEIPT_TYPES = [
+    {"code":"EP",     "name":"Balaji Convent English Primary School",                 "department_name":"English Primary Section",              "category":"school", "description":"Fees for Class 1–4 (English medium)",              "icon":"GraduationCap",   "display_order":10, "tabs":["school","installment","misc"]},
+    {"code":"MP",     "name":"Balaji Convent Marathi Primary School",                 "department_name":"Marathi Primary Section",              "category":"school", "description":"Fees for इयत्ता १–४ (मराठी माध्यम)",             "icon":"BookOpen",        "display_order":20, "tabs":["school","installment","misc"]},
+    {"code":"EMP",    "name":"Balaji Convent English & Marathi Primary School",       "department_name":"English + Marathi Primary (Combined)", "category":"school", "description":"Combined receipt when a family pays for both mediums", "icon":"GraduationCap", "display_order":30, "tabs":["school","installment","misc"]},
+    {"code":"SEC",    "name":"Balaji Convent Secondary School (Self Financing)",     "department_name":"Secondary Section",                    "category":"school", "description":"Class 5–10 self-financing",                         "icon":"Award",           "display_order":40, "tabs":["school","installment","misc"]},
+    {"code":"JC",     "name":"Balaji Convent Junior College",                          "department_name":"Junior College",                       "category":"school", "description":"XI–XII, all standard streams",                       "icon":"GraduationCap",   "display_order":50, "tabs":["school","installment","misc"]},
+    {"code":"JCACS",  "name":"Balaji Convent JC (Arts, Commerce, Science & Bifocal)","department_name":"Junior College — ACS/Bifocal",         "category":"school", "description":"XI–XII with bifocal & specialised streams",         "icon":"Award",           "display_order":60, "tabs":["school","installment","misc"]},
+    {"code":"BUS",    "name":"Balaji Convent Bus Receipt",                             "department_name":"School Bus Transport",                 "category":"bus",    "description":"Monthly / termly bus route fees",                    "icon":"Bus",             "display_order":70, "tabs":["school"]},
+    {"code":"EMJC",   "name":"Balaji Convent English, Marathi & Junior College",     "department_name":"Combined EM + MP + JC",                "category":"school", "description":"Consolidated receipt across all three sections",     "icon":"ClipboardList",   "display_order":80, "tabs":["school","installment","misc"]},
+    {"code":"DV",     "name":"Debit Voucher",                                          "department_name":"Finance / Petty Cash",                 "category":"finance","description":"For expenses, refunds, vendor payments",             "icon":"Wallet",          "display_order":90, "tabs":["school"]},
+]
+
+async def _seed_receipt_types_if_empty():
+    n = await db.receipt_types.count_documents({})
+    if n > 0: return
+    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
+    now = now_iso()
+    for t in DEFAULT_RECEIPT_TYPES:
+        dept = depts.get(t["code"])  # link when code matches an existing dept
+        await db.receipt_types.insert_one({
+            "id": gen_id(), **t,
+            "department_id": dept["id"] if dept else None,
+            "enabled": True, "archived": False,
+            "default_payment_modes": ["cash","upi","card"],
+            "print_template": "a4-navy", "report_category": t["category"],
+            "created_at": now, "updated_at": now,
+        })
+
+@api.get("/receipt-types")
+async def list_receipt_types(
+    category: Optional[Literal["school","bus","finance","misc"]] = None,
+    include_disabled: bool = False,
+    include_archived: bool = False,
+    user = Depends(get_current_user),
+):
+    await _seed_receipt_types_if_empty()
+    q: Dict[str, Any] = {}
+    if not include_archived: q["archived"] = {"$ne": True}
+    if not include_disabled: q["enabled"] = True
+    if category: q["category"] = category
+    rows = await db.receipt_types.find(q, {"_id":0}).sort("display_order", 1).to_list(200)
+    return rows
+
+@api.get("/receipt-types/{rtid}")
+async def get_receipt_type(rtid: str, user = Depends(get_current_user)):
+    doc = await db.receipt_types.find_one({"id": rtid}, {"_id":0})
+    if not doc: raise HTTPException(404, "Not found")
+    return doc
+
+@api.post("/receipt-types")
+async def create_receipt_type(body: ReceiptTypeIn, user = Depends(require_roles("administrator"))):
+    if await db.receipt_types.find_one({"code": body.code.upper()}):
+        raise HTTPException(400, f"Receipt type with prefix {body.code} already exists")
+    rid = gen_id()
+    doc = {"id": rid, **body.model_dump(), "code": body.code.upper(), "created_at": now_iso(), "updated_at": now_iso()}
+    await db.receipt_types.insert_one(doc)
+    await audit(user, "create", "receipt_type", rid, {"code": doc["code"], "name": doc["name"]})
+    return {k:v for k,v in doc.items() if k != "_id"}
+
+@api.patch("/receipt-types/{rtid}")
+async def update_receipt_type(rtid: str, body: Dict[str, Any], user = Depends(require_roles("administrator"))):
+    existing = await db.receipt_types.find_one({"id": rtid})
+    if not existing: raise HTTPException(404, "Not found")
+    allowed = {"name","department_name","department_id","category","description","icon","display_order","enabled","tabs","default_payment_modes","print_template","report_category","notes","archived"}
+    upd = {k: v for k, v in body.items() if k in allowed}
+    # Special: changing prefix code is sensitive — audit-log heavy but allow admin
+    if "code" in body and body["code"]:
+        new_code = str(body["code"]).upper()
+        if new_code != existing.get("code"):
+            if await db.receipt_types.find_one({"code": new_code, "id": {"$ne": rtid}}):
+                raise HTTPException(400, f"Another receipt type already uses prefix {new_code}")
+            upd["code"] = new_code
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    upd["updated_at"] = now_iso()
+    await db.receipt_types.update_one({"id": rtid}, {"$set": upd})
+    await audit(user, "update", "receipt_type", rtid, {"before": {k: existing.get(k) for k in upd.keys()}, "after": upd})
+    doc = await db.receipt_types.find_one({"id": rtid}, {"_id":0})
+    return doc
+
+@api.delete("/receipt-types/{rtid}")
+async def delete_receipt_type(rtid: str, user = Depends(require_roles("administrator"))):
+    doc = await db.receipt_types.find_one({"id": rtid})
+    if not doc: raise HTTPException(404, "Not found")
+    used = await db.receipts.count_documents({"receipt_type_id": rtid})
+    if used > 0:
+        raise HTTPException(409, {"message": f"This receipt type has {used} existing transactions. Disable or archive it instead.", "used_count": used, "can_archive": True})
+    await db.receipt_types.delete_one({"id": rtid})
+    await audit(user, "delete", "receipt_type", rtid, {"code": doc.get("code"), "name": doc.get("name")})
+    return {"deleted": True}
+
+@api.post("/receipt-types/{rtid}/archive")
+async def archive_receipt_type(rtid: str, user = Depends(require_roles("administrator"))):
+    doc = await db.receipt_types.find_one({"id": rtid})
+    if not doc: raise HTTPException(404, "Not found")
+    await db.receipt_types.update_one({"id": rtid}, {"$set": {"archived": True, "enabled": False, "updated_at": now_iso()}})
+    await audit(user, "archive", "receipt_type", rtid, {"code": doc.get("code")})
+    return {"archived": True}
+
+@api.post("/receipt-types/reseed-defaults")
+async def reseed_receipt_types(user = Depends(require_roles("administrator"))):
+    """Idempotent — only adds any DEFAULT_RECEIPT_TYPES rows whose prefix is missing."""
+    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
+    now = now_iso(); added = []
+    for t in DEFAULT_RECEIPT_TYPES:
+        if await db.receipt_types.find_one({"code": t["code"]}):
+            continue
+        dept = depts.get(t["code"])
+        await db.receipt_types.insert_one({
+            "id": gen_id(), **t,
+            "department_id": dept["id"] if dept else None,
+            "enabled": True, "archived": False,
+            "default_payment_modes": ["cash","upi","card"],
+            "print_template": "a4-navy", "report_category": t["category"],
+            "created_at": now, "updated_at": now,
+        })
+        added.append(t["code"])
+    await audit(user, "reseed", "receipt_type", "", {"added": added})
+    return {"added": added, "count": len(added)}
 
 async def next_voucher_number(academic_year: str) -> str:
     key = f"VCH-{academic_year}"
