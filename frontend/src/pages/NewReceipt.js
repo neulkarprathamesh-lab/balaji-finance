@@ -184,7 +184,14 @@ export default function NewReceipt() {
             )}
             {activeType.needsStudent && student && (
               <div className="grid grid-cols-3 gap-4 border-t border-slate-200 pt-4">
-                <Field label="Class"><input className={inp} value={meta.class_name || ''} onChange={e=>setM('class_name', e.target.value)} placeholder="Auto: current class" /></Field>
+                <Field label="Class"><input className={inp} value={meta.class_name || ''} onChange={e=>setM('class_name', e.target.value)} placeholder="e.g. 5th / A" /></Field>
+                <Field label="Roll No"><input className={inp} value={meta.roll_no || ''} onChange={e=>setM('roll_no', e.target.value)} /></Field>
+                <Field label="Medium"><select className={inp} value={meta.medium || ''} onChange={e=>setM('medium', e.target.value)}>
+                  <option value="">Auto</option><option>English</option><option>Semi English</option><option>Marathi</option><option>Junior College</option>
+                </select></Field>
+                <Field label="Guardian Name"><input className={inp} value={meta.guardian_name || ''} onChange={e=>setM('guardian_name', e.target.value)} /></Field>
+                <Field label="Mother Name"><input className={inp} value={meta.mother_name || ''} onChange={e=>setM('mother_name', e.target.value)} /></Field>
+                <Field label="Contact No"><input className={inp} value={meta.guardian_mobile || ''} onChange={e=>setM('guardian_mobile', e.target.value)} /></Field>
                 {type === 'admission' && <Field label="Session"><input className={inp} value={meta.session || ''} onChange={e=>setM('session', e.target.value)} placeholder="2026-27" /></Field>}
                 {dept && depts.find(d=>d.id===dept)?.code === 'JC' && <Field label="Faculti"><input className={inp} value={meta.faculti || ''} onChange={e=>setM('faculti', e.target.value)} placeholder="Science / Commerce / Arts" /></Field>}
               </div>

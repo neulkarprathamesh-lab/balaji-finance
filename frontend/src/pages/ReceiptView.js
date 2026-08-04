@@ -94,76 +94,160 @@ function Footer({ r }) {
   );
 }
 
-/* ============ Fee Receipt (school/admission/misc/dept/refund) ============ */
+/* ============ Fee Receipt (school/admission/misc/dept/refund) — modern A4 design ============ */
 function FeeReceipt({ r }) {
   const meta = r.metadata || {};
-  const dateStr = new Date(r.created_at).toLocaleDateString('en-IN');
-  // Ensure at least 5 rows (matching the physical book)
-  const rows = [...r.lines];
-  while (rows.length < 5) rows.push({ fee_head_name: '', amount: '' });
+  const dateStr = new Date(r.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+  const code = r.department_code || '';
+  const dept_line1 = { EP: 'BALAJI CONVENT', MP: 'BALAJI CONVENT', SEC: 'BALAJI CONVENT SECONDARY SCHOOL', JC: 'BALAJI CONVENT & JR. COLLEGE' }[code] || 'BALAJI CONVENT & JUNIOR COLLEGE';
+  const dept_line2 = { EP: 'ENGLISH PRIMARY SCHOOL', MP: 'MARATHI PRIMARY SCHOOL', SEC: 'SELF FINANCING', JC: 'ARTS, COMMERCE, SCIENCE & BI-FOCAL' }[code] || '';
+  const total = Number(r.total || 0);
+  const paid = Number(r.total || 0);
+  const balance = 0;
 
   return (
-    <>
-      <Header r={r} boxLabel={r.receipt_type === 'refund' ? 'REFUND RECEIPT' : 'RECEIPT'} />
-
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-4 text-[13px]">
-        <div>No. <span className="font-mono font-bold text-red-700 text-base">{r.number}</span></div>
-        <div className="text-right">Date: <span className="border-b border-slate-500 inline-block min-w-[100px] font-mono">{dateStr}</span></div>
-      </div>
-
-      <div className="mt-3 space-y-1.5 text-[13px]">
-        <div className="flex gap-2"><span>Name</span><span className="border-b border-slate-500 flex-1 pl-1 font-medium">{r.student_snapshot?.name || r.payer_name || ''}</span></div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex gap-2"><span>Class</span><span className="border-b border-slate-500 flex-1 pl-1">{meta.class_name || ''}</span></div>
-          <div className="flex gap-2"><span>{r.department_code === 'JC' ? 'Faculti' : 'Adm. No.'}</span><span className="border-b border-slate-500 flex-1 pl-1">{meta.faculti || r.student_snapshot?.admission_no || ''}</span></div>
+    <div className="text-slate-900 text-[13px]">
+      {/* HEADER */}
+      <div className="grid grid-cols-12 gap-3 pb-4 border-b-2 border-slate-900">
+        <div className="col-span-6 flex items-start gap-3">
+          <img src={LOGO} alt="logo" className="w-20 h-20 rounded-full object-cover ring-1 ring-slate-300" />
+          <div>
+            <div className="font-heading font-black text-xl tracking-tight leading-tight uppercase">{dept_line1}</div>
+            <div className="text-[13px] font-bold tracking-wide uppercase text-slate-800">BUTIBORI, NAGPUR</div>
+            <div className="text-[10px] text-slate-600 mt-0.5 leading-tight">{dept_line2}</div>
+            <div className="text-[10px] text-slate-600">NURSERY TO CLASS 10 (ENGLISH · SEMI ENGLISH · MARATHI)</div>
+            <div className="text-[10px] text-slate-600">JUNIOR COLLEGE (SCIENCE · COMMERCE · ARTS) · STATE PATTERN</div>
+          </div>
         </div>
-        <div className="flex gap-2"><span>Session</span><span className="border-b border-slate-500 flex-1 pl-1 font-mono">{meta.session || r.academic_year || ''}</span></div>
+        <div className="col-span-3 text-center border-x border-slate-300 px-3">
+          <div className="inline-block bg-slate-900 text-white px-4 py-1 font-bold tracking-widest text-[13px]">
+            {r.receipt_type === 'refund' ? 'REFUND RECEIPT' : r.receipt_type === 'admission' ? 'ADMISSION RECEIPT' : 'FEE RECEIPT'}
+          </div>
+          <div className="italic text-slate-600 mt-2 text-[11px] leading-tight">Shaping Tomorrow,<br/>Building Excellence</div>
+        </div>
+        <div className="col-span-3 text-right text-[11px] space-y-0.5">
+          <div className="text-slate-500 uppercase tracking-widest text-[9px]">Receipt No.</div>
+          <div className="font-mono font-bold text-slate-900 text-[13px]">{r.number}</div>
+          <div className="text-slate-500 uppercase tracking-widest text-[9px] mt-1">Date</div>
+          <div className="font-mono font-semibold">{dateStr}</div>
+          <div className="text-slate-500 uppercase tracking-widest text-[9px] mt-1">Academic Year</div>
+          <div className="font-mono font-semibold">{r.academic_year}</div>
+        </div>
       </div>
 
-      <table className="w-full text-[13px] border border-slate-900 mt-3">
-        <thead>
-          <tr className="border-b border-slate-900">
-            <th className="border-r border-slate-900 py-1 px-1 w-12 text-center">Sr.<br/>No.</th>
-            <th className="border-r border-slate-900 py-1 px-2 text-left">PARTICULARS</th>
-            <th className="border-r border-slate-900 py-1 px-2 text-center w-20">Rs.</th>
-            <th className="py-1 px-2 text-center w-14">Ps.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((l, i) => {
-            const amt = l.amount ? Number(l.amount) : null;
-            const rupees = amt != null ? Math.floor(amt) : '';
-            const paise = amt != null ? String(Math.round((amt - Math.floor(amt)) * 100)).padStart(2, '0') : '';
-            return (
-              <tr key={i} className="border-b border-slate-400">
-                <td className="border-r border-slate-900 text-center py-1.5">{i + 1})</td>
-                <td className="border-r border-slate-900 px-2 py-1.5 font-medium">{l.fee_head_name || ''}{l.note ? ` — ${l.note}` : ''}</td>
-                <td className="border-r border-slate-900 px-2 py-1.5 text-right tabular font-mono">{rupees !== '' ? rupees : ''}</td>
-                <td className="px-2 py-1.5 text-right tabular font-mono">{paise}</td>
+      {/* STATUS BANNER */}
+      {r.status === 'cancelled' && <div className="text-center text-red-600 font-bold text-sm my-2">*** CANCELLED ***</div>}
+      {r.reprint_count > 0 && <div className="text-center text-amber-700 font-semibold text-[11px] my-1">DUPLICATE · Reprint #{r.reprint_count}</div>}
+
+      {/* DETAILS */}
+      <div className="mt-3 border border-slate-300">
+        <div className="bg-slate-100 border-b border-slate-300 text-center py-1 text-[11px] font-bold tracking-widest">DETAILS</div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 p-3 text-[12px]">
+          <Row label="STUDENT NAME" value={r.student_snapshot?.name || r.payer_name} />
+          <Row label="FATHER / GUARDIAN" value={meta.guardian_name} />
+          <Row label="ADMISSION NO." value={r.student_snapshot?.admission_no} mono />
+          <Row label="MOTHER NAME" value={meta.mother_name} />
+          <Row label="CLASS / DIVISION" value={meta.class_name} />
+          <Row label="CONTACT NO." value={meta.guardian_mobile} mono />
+          <Row label="ROLL NO." value={meta.roll_no} />
+          <Row label="MEDIUM" value={meta.medium} />
+          <Row label="SESSION" value={meta.session || r.academic_year} />
+          <Row label="DEPARTMENT" value={r.department_name} />
+          {code === 'JC' && <Row label="FACULTI" value={meta.faculti} />}
+          <Row label="PATTERN" value={meta.pattern || 'State Pattern'} />
+        </div>
+      </div>
+
+      {/* FEE TABLE + AMOUNT RECEIVED SIDEBAR */}
+      <div className="grid grid-cols-12 gap-3 mt-3">
+        <div className="col-span-8">
+          <table className="w-full text-[12px] border border-slate-400">
+            <thead>
+              <tr className="bg-slate-100 border-b border-slate-400 text-[11px]">
+                <th className="border-r border-slate-400 py-1.5 px-2 w-12">SR. NO.</th>
+                <th className="border-r border-slate-400 py-1.5 px-2 text-left">FEE HEAD</th>
+                <th className="border-r border-slate-400 py-1.5 px-2 text-right">TOTAL (₹)</th>
+                <th className="border-r border-slate-400 py-1.5 px-2 text-right">PAID (₹)</th>
+                <th className="py-1.5 px-2 text-right">BALANCE (₹)</th>
               </tr>
-            );
-          })}
-          <tr className="border-t-2 border-slate-900 bg-slate-50">
-            <td colSpan="2" className="border-r border-slate-900 text-right px-2 py-1.5 font-bold">TOTAL</td>
-            <td className="border-r border-slate-900 px-2 py-1.5 text-right tabular font-mono font-bold">{Math.floor(r.total)}</td>
-            <td className="px-2 py-1.5 text-right tabular font-mono font-bold">{String(Math.round((r.total - Math.floor(r.total)) * 100)).padStart(2,'0')}</td>
-          </tr>
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {r.lines.map((l, i) => (
+                <tr key={i} className="border-b border-slate-300">
+                  <td className="border-r border-slate-300 text-center py-1.5">{i + 1}</td>
+                  <td className="border-r border-slate-300 px-2 py-1.5 font-medium uppercase">{l.fee_head_name}{l.note ? ` — ${l.note}` : ''}</td>
+                  <td className="border-r border-slate-300 px-2 py-1.5 text-right tabular font-mono">{Number(l.amount).toFixed(2)}</td>
+                  <td className="border-r border-slate-300 px-2 py-1.5 text-right tabular font-mono">{Number(l.amount).toFixed(2)}</td>
+                  <td className="px-2 py-1.5 text-right tabular font-mono">0.00</td>
+                </tr>
+              ))}
+              <tr className="bg-slate-100 border-t-2 border-slate-900 font-bold">
+                <td colSpan="2" className="border-r border-slate-400 text-right px-2 py-1.5">TOTAL</td>
+                <td className="border-r border-slate-400 px-2 py-1.5 text-right tabular font-mono">{total.toFixed(2)}</td>
+                <td className="border-r border-slate-400 px-2 py-1.5 text-right tabular font-mono">{paid.toFixed(2)}</td>
+                <td className="px-2 py-1.5 text-right tabular font-mono">{balance.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-      <div className="mt-3 text-[13px]">
-        <div className="flex gap-2"><span>Rs. (in words)</span><span className="border-b border-slate-500 flex-1 pl-1 italic">{r.amount_in_words}</span></div>
+        <div className="col-span-4 border border-slate-400">
+          <div className="p-3 border-b border-slate-300">
+            <div className="text-[9px] uppercase tracking-widest text-slate-500">Amount in Words</div>
+            <div className="text-[12px] font-semibold mt-0.5">{r.amount_in_words}</div>
+          </div>
+          <div className="p-3 border-b border-slate-300">
+            <div className="text-[9px] uppercase tracking-widest text-slate-500">Payment Mode</div>
+            <div className="text-[13px] font-semibold capitalize">{r.payment_mode}</div>
+          </div>
+          <div className="p-3 border-b border-slate-300">
+            <div className="text-[9px] uppercase tracking-widest text-slate-500">Transaction ID</div>
+            <div className="text-[11px] font-mono">{r.payment_reference || `${r.payment_mode.toUpperCase()}/${r.number}`}</div>
+          </div>
+          <div className="p-3 bg-slate-900 text-white text-center">
+            <div className="text-[9px] uppercase tracking-widest text-slate-300">Amount Received</div>
+            <div className="font-heading text-2xl font-bold font-mono tabular mt-0.5">₹ {total.toFixed(2)}</div>
+          </div>
+        </div>
       </div>
 
-      <div className="flex justify-between items-end mt-8 text-[13px]">
-        <div>Payment: <span className="font-semibold">{r.payment_mode === 'cash' ? 'Cash' : r.payment_mode === 'online' ? 'Online' : `${r.payment_mode.toUpperCase()}${r.payment_reference ? ` — ${r.payment_reference}` : ''}`}</span></div>
-        <div className="text-center"><div className="border-t border-slate-500 pt-0.5 px-6">Received By</div><div className="text-[11px] text-slate-600">{r.cashier_name}</div></div>
+      {/* NOTES + SIGNATURES */}
+      <div className="grid grid-cols-3 gap-6 mt-4 text-[11px]">
+        <div>
+          <div className="font-bold text-[10px] tracking-widest text-slate-600 mb-1">NOTES:</div>
+          <ul className="text-slate-600 space-y-0.5 list-disc pl-4">
+            <li>This is a computer generated receipt.</li>
+            <li>No signature is required.</li>
+            <li>Fees once paid will not be refunded.</li>
+            <li>Please preserve this receipt for your records.</li>
+          </ul>
+        </div>
+        <div className="text-center pt-6">
+          <div className="border-t border-slate-500 pt-1 text-[10px] tracking-widest">RECEIVED BY</div>
+          <div className="text-[10px] text-slate-600">{r.cashier_name}</div>
+        </div>
+        <div className="text-center pt-6">
+          <div className="border-t border-slate-500 pt-1 text-[10px] tracking-widest">AUTHORIZED BY</div>
+        </div>
       </div>
 
-      <Footer r={r} />
-    </>
+      {/* FOOTER */}
+      <div className="mt-4 pt-2 border-t border-slate-300 flex justify-between items-center text-[10px] text-slate-600">
+        <span>📍 Butibori, Nagpur — 441122, Maharashtra</span>
+        <span>📞 07103-234567</span>
+        <span>✉ info@balajiconventbutibori.edu.in</span>
+      </div>
+    </div>
   );
 }
+
+const Row = ({ label, value, mono }) => (
+  <div className="flex gap-2">
+    <span className="text-slate-500 min-w-[130px]">{label}</span>
+    <span className="text-slate-400">:</span>
+    <span className={`font-semibold flex-1 ${mono ? 'font-mono' : ''}`}>{value || '—'}</span>
+  </div>
+);
 
 /* ============ Bus Fee Receipt ============ */
 function BusReceipt({ r }) {
