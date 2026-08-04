@@ -225,6 +225,64 @@ async def logout(response: Response):
 async def me(user = Depends(get_current_user)):
     return user
 
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+@api.patch("/auth/me")
+async def update_me(body: ProfileUpdate, user = Depends(get_current_user)):
+    upd: Dict[str, Any] = {}
+    if body.name and body.name.strip():
+        upd["name"] = body.name.strip()
+    if body.new_password:
+        if not body.current_password:
+            raise HTTPException(400, "Current password required to change password")
+        current = await db.users.find_one({"id": user["id"]})
+        if not current or not verify_password(body.current_password, current["password_hash"]):
+            raise HTTPException(400, "Current password is incorrect")
+        if len(body.new_password) < 6:
+            raise HTTPException(400, "New password must be at least 6 characters")
+        upd["password_hash"] = hash_password(body.new_password)
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    await db.users.update_one({"id": user["id"]}, {"$set": upd})
+    await audit(user, "update", "profile", user["id"], {"fields": [k for k in upd.keys() if k != "password_hash"] + (["password"] if "password_hash" in upd else [])})
+    fresh = await db.users.find_one({"id": user["id"]})
+    return clean(fresh)
+
+# ---------------- Settings ----------------
+SETTINGS_ID = "school_settings"
+
+async def get_settings_doc():
+    doc = await db.settings.find_one({"id": SETTINGS_ID}, {"_id": 0})
+    if not doc:
+        doc = {
+            "id": SETTINGS_ID,
+            "school_name": "Balaji Convent & Junior College",
+            "school_address": "Butibori, Nagpur",
+            "school_phone": "",
+            "school_email": "",
+            "receipt_footer": "This is a computer-generated receipt.",
+            "notice_footer": "Fee counter timing: 9:00 AM – 3:00 PM (Monday to Saturday). Modes accepted: Cash / Cheque / DD / UPI / NEFT.",
+            "bus_annual_months": 12,
+        }
+        await db.settings.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+@api.get("/settings")
+async def read_settings(user = Depends(get_current_user)):
+    return await get_settings_doc()
+
+@api.patch("/settings")
+async def update_settings(body: Dict[str, Any], user = Depends(require_roles("administrator"))):
+    await get_settings_doc()  # ensure exists
+    allowed = {k: v for k, v in body.items() if k in ("school_name","school_address","school_phone","school_email","receipt_footer","notice_footer","bus_annual_months")}
+    await db.settings.update_one({"id": SETTINGS_ID}, {"$set": allowed})
+    await audit(user, "update", "settings", SETTINGS_ID, allowed)
+    return await get_settings_doc()
+
 # ---------------- Users (admin) ----------------
 @api.get("/users")
 async def list_users(user = Depends(require_roles("administrator"))):
@@ -837,6 +895,11 @@ async def outstanding_notices(
     class_map = {c["id"]: c for c in await db.classes.find({}, {"_id":0}).to_list(500)}
     fs_ids = list({s.get("fee_structure_id") for s in students if s.get("fee_structure_id")})
     fs_map = {f["id"]: f for f in await db.fee_structures.find({"id":{"$in": fs_ids}}, {"_id":0}).to_list(500)} if fs_ids else {}
+    # Bus routes map by code (students carry bus_route = route.code)
+    routes = await db.bus_routes.find({}, {"_id":0}).to_list(200)
+    route_map = {r["code"]: r for r in routes}
+    settings = await get_settings_doc()
+    bus_months = int(settings.get("bus_annual_months", 12) or 12)
     sids = [s["id"] for s in students]
     receipts = await db.receipts.find({"student_id":{"$in": sids}, "status":{"$ne":"cancelled"}}, {"_id":0}).to_list(20000)
     adjs = await db.adjustments.find({"student_id":{"$in": sids}, "status":"approved"}, {"_id":0}).to_list(5000)
@@ -851,7 +914,11 @@ async def outstanding_notices(
     out = []
     for s in students:
         fs = fs_map.get(s.get("fee_structure_id"))
-        total_fee = fs.get("total", 0) if fs else 0
+        academic_fee = fs.get("total", 0) if fs else 0
+        # Bus fee: if student has bus_route, add route monthly_fee x bus_months
+        bus_route = route_map.get(s.get("bus_route")) if s.get("bus_route") else None
+        bus_fee_annual = float(bus_route.get("monthly_fee", 0)) * bus_months if bus_route else 0
+        total_fee = academic_fee + bus_fee_annual
         paid = paid_by.get(s["id"], 0)
         refund = refund_by.get(s["id"], 0)
         adjusted = adj_by.get(s["id"], 0)
@@ -863,7 +930,13 @@ async def outstanding_notices(
             "department_name": dept_map.get(s["department_id"],{}).get("name"),
             "class_name": class_map.get(s["class_id"],{}).get("name"),
             "academic_year": dept_map.get(s["department_id"],{}).get("academic_year"),
-            "total_fee": total_fee, "paid": paid, "adjusted": adjusted, "refunded": refund,
+            "total_fee": total_fee, "academic_fee": academic_fee,
+            "bus_route_code": s.get("bus_route") if bus_route else None,
+            "bus_route_name": bus_route.get("name") if bus_route else None,
+            "bus_monthly_fee": bus_route.get("monthly_fee") if bus_route else 0,
+            "bus_months": bus_months if bus_route else 0,
+            "bus_fee_annual": bus_fee_annual,
+            "paid": paid, "adjusted": adjusted, "refunded": refund,
             "outstanding": outstanding,
             "items": fs.get("items", []) if fs else [],
         })

@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon
 } from 'lucide-react';
 
 const nav = [
@@ -21,6 +21,7 @@ const nav = [
   { to: '/concessions', label: 'Concession Ledger', icon: Award, roles: ['administrator','manager','accountant'] },
   { to: '/promotion', label: 'Promotion & Rollover', icon: GraduationCap, roles: ['administrator','manager'] },
   { to: '/fee-structure', label: 'Fee Structure', icon: Wallet, roles: ['administrator','manager','accountant'] },
+  { to: '/settings', label: 'Settings', icon: Settings2, roles: ['administrator'] },
   { to: '/admin', label: 'Administration', icon: Shield, roles: ['administrator'] },
 ];
 
@@ -79,6 +80,13 @@ export default function Layout() {
               </span>
             </div>
           </div>
+          <button
+            data-testid="profile-btn"
+            onClick={() => navigate('/profile')}
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-[13px] text-slate-300 hover:text-white hover:bg-slate-800 rounded mb-0.5"
+          >
+            <UserIcon className="w-4 h-4" /> My Profile
+          </button>
           <button
             data-testid="logout-btn"
             onClick={async () => { await logout(); navigate('/login'); }}

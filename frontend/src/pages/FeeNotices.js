@@ -131,7 +131,11 @@ function Notice({ s, preview = false }) {
         <table className="w-full text-sm border-t border-b border-slate-400 my-3">
           <thead><tr className="border-b border-slate-400"><th className="text-left py-1.5">Particulars</th><th className="text-right">Amount</th></tr></thead>
           <tbody>
-            <tr><td className="py-1">Total Annual Fee</td><td className="text-right tabular">{inr(s.total_fee)}</td></tr>
+            <tr><td className="py-1">Academic Fee (Annual)</td><td className="text-right tabular">{inr(s.academic_fee ?? s.total_fee)}</td></tr>
+            {s.bus_fee_annual > 0 && (
+              <tr><td className="py-1">Bus Fee — Route {s.bus_route_code} {s.bus_route_name ? `(${s.bus_route_name})` : ''} · {inr(s.bus_monthly_fee)} × {s.bus_months} months</td><td className="text-right tabular">{inr(s.bus_fee_annual)}</td></tr>
+            )}
+            <tr className="border-t border-slate-200"><td className="py-1 font-medium">Total Annual Fee</td><td className="text-right tabular font-medium">{inr(s.total_fee)}</td></tr>
             <tr><td className="py-1">Less: Amount Paid</td><td className="text-right tabular text-emerald-700">− {inr(s.paid)}</td></tr>
             {s.adjusted > 0 && <tr><td className="py-1">Less: Concession / Adjustment</td><td className="text-right tabular text-emerald-700">− {inr(s.adjusted)}</td></tr>}
             {s.refunded > 0 && <tr><td className="py-1">Add: Refunded</td><td className="text-right tabular">+ {inr(s.refunded)}</td></tr>}

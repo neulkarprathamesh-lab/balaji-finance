@@ -21,6 +21,8 @@ import Concessions from '@/pages/Concessions';
 import Promotion from '@/pages/Promotion';
 import BusRoutes from '@/pages/BusRoutes';
 import FeeNotices from '@/pages/FeeNotices';
+import Profile from '@/pages/Profile';
+import Settings from '@/pages/Settings';
 import '@/index.css';
 
 const Protected = ({ children, roles }) => {
@@ -53,6 +55,8 @@ export default function App() {
             <Route path="promotion" element={<Protected roles={['administrator','manager']}><Promotion /></Protected>} />
             <Route path="bus-routes" element={<BusRoutes />} />
             <Route path="fee-notices" element={<FeeNotices />} />
+            <Route path="profile" element={<Profile />} />
+            <Route path="settings" element={<Protected roles={['administrator']}><Settings /></Protected>} />
             <Route path="fee-structure" element={<Protected roles={['administrator','manager','accountant']}><FeeStructure /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>
