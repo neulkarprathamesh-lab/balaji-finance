@@ -25,6 +25,8 @@ import Profile from '@/pages/Profile';
 import Settings from '@/pages/Settings';
 import AssignStudents from '@/pages/AssignStudents';
 import FeeBrochure from '@/pages/FeeBrochure';
+import Defaulters from '@/pages/Defaulters';
+import Lookup from '@/pages/Lookup';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -53,6 +55,7 @@ export default function App() {
             <Route path="extensions" element={<Extensions />} />
             <Route path="reminders" element={<Reminders />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="defaulters" element={<Defaulters />} />
             <Route path="cancellations" element={<Protected roles={['administrator','manager','accountant']}><Cancellations /></Protected>} />
             <Route path="concessions" element={<Protected roles={['administrator','manager','accountant']}><Concessions /></Protected>} />
             <Route path="promotion" element={<Protected roles={['administrator','manager']}><Promotion /></Protected>} />
@@ -66,6 +69,7 @@ export default function App() {
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>
           <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />
+          <Route path="/lookup/:number" element={<Lookup />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

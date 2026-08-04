@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
 import { toast } from 'sonner';
-import { AlertCircle, Calendar, CalendarCheck } from 'lucide-react';
+import { AlertCircle, Calendar, CalendarCheck, FileEdit } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const REMARK_TYPES = [
   { v:'will_pay_today', l:'Will pay today' },
@@ -17,6 +18,7 @@ const REMARK_TYPES = [
 export default function Reminders() {
   const [rows, setRows] = useState([]);
   const [bucket, setBucket] = useState('all');
+  const nav = useNavigate();
   const load = () => api.get('/reminders?status=pending').then(r => setRows(r.data));
   useEffect(() => { load(); }, []);
 
@@ -60,10 +62,18 @@ export default function Reminders() {
                   <td><span className={`text-[11px] px-1.5 py-0.5 rounded uppercase ${r.bucket==='overdue'?'bg-red-100 text-red-800':r.bucket==='today'?'bg-amber-100 text-amber-800':'bg-slate-100 text-slate-700'}`}>{r.bucket}</span></td>
                   <td className="text-[11px] text-slate-500">{r.followups?.length ? r.followups[r.followups.length-1].remark_type : '-'}</td>
                   <td>
-                    <select onChange={e => e.target.value && submitFollowup(r.id, e.target.value)} defaultValue="" className="h-8 px-2 border border-slate-300 rounded text-xs bg-white">
-                      <option value="">+ Add follow-up</option>
-                      {REMARK_TYPES.map(x => <option key={x.v} value={x.v}>{x.l}</option>)}
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <select onChange={e => e.target.value && submitFollowup(r.id, e.target.value)} defaultValue="" className="h-8 px-2 border border-slate-300 rounded text-xs bg-white">
+                        <option value="">+ Add follow-up</option>
+                        {REMARK_TYPES.map(x => <option key={x.v} value={x.v}>{x.l}</option>)}
+                      </select>
+                      <button
+                        data-testid={`rem-waiver-${r.id}`}
+                        onClick={() => nav(`/adjustments?student=${r.student_id}&amount=${r.amount}&reason=${encodeURIComponent(`Waiver request for ${r.installment_name} (due ${r.due_date})`)}&reminder=${r.id}`)}
+                        title="Request a waiver / concession for this student"
+                        className="h-8 px-2 border border-amber-300 rounded text-xs text-amber-800 hover:bg-amber-50 flex items-center gap-1"
+                      ><FileEdit className="w-3 h-3" /> Waiver</button>
+                    </div>
                   </td>
                 </tr>
               ))}

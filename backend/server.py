@@ -1313,6 +1313,96 @@ async def manual_generate_quarterly(user = Depends(require_roles("administrator"
     await audit(user, "generate_quarterly_reminders", "reminder", "", result)
     return result
 
+# ---------------- Public Scan-to-Lookup (no auth) ----------------
+@api.get("/public/lookup/{number}")
+async def public_lookup(number: str):
+    r = await db.receipts.find_one({"number": number}, {"_id": 0, "cashier_id": 0})
+    if not r:
+        raise HTTPException(404, "Receipt not found")
+    payload: Dict[str, Any] = {"receipt": r}
+    if r.get("student_id"):
+        s = await db.students.find_one({"id": r["student_id"]}, {"_id": 0})
+        if s:
+            payload["student"] = {
+                "admission_no": s["admission_no"], "name": s["name"],
+                "guardian_name": s.get("guardian_name"), "guardian_mobile": s.get("guardian_mobile"),
+                "department_id": s.get("department_id"), "class_id": s.get("class_id"),
+            }
+            # Ledger summary (no cashier / auditor info)
+            receipts = await db.receipts.find({"student_id": s["id"], "status": {"$ne": "cancelled"}},
+                                              {"_id": 0, "cashier_id": 0}).sort("created_at", -1).to_list(200)
+            fs = None
+            if s.get("fee_structure_id"):
+                fs = await db.fee_structures.find_one({"id": s["fee_structure_id"]}, {"_id": 0})
+            paid = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") not in ("refund", "debit_voucher"))
+            refunded = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") == "refund")
+            adjustments = await db.adjustments.find({"student_id": s["id"], "status": "approved"}, {"_id": 0}).to_list(100)
+            adjusted = sum(a.get("amount", 0) for a in adjustments)
+            total_fee = fs.get("total", 0) if fs else 0
+            payload["ledger"] = {
+                "total_fee": total_fee, "paid": paid, "adjusted": adjusted, "refunded": refunded,
+                "outstanding": max(0, total_fee - paid - adjusted + refunded),
+                "receipts": [{"number": x["number"], "type": x.get("receipt_type"), "date": x.get("created_at"), "total": x.get("total"), "mode": x.get("payment_mode")} for x in receipts[:20]],
+                "receipts_count": len(receipts),
+            }
+    return payload
+
+# ---------------- Fee Defaulters Report ----------------
+@api.get("/reports/defaulters")
+async def defaulters_report(
+    quarter: Literal["Q1","Q2","Q3","total"] = "total",
+    department_id: Optional[str] = None,
+    class_id: Optional[str] = None,
+    user = Depends(get_current_user),
+):
+    q: Dict[str, Any] = {"status": "active", "fee_structure_id": {"$ne": None}}
+    if department_id: q["department_id"] = department_id
+    if class_id: q["class_id"] = class_id
+    students = await db.students.find(q, {"_id": 0}).to_list(5000)
+    if not students:
+        return {"count": 0, "total_outstanding": 0, "students": [], "quarter": quarter}
+    dept_map = {d["id"]: d for d in await db.departments.find({}, {"_id":0}).to_list(50)}
+    class_map = {c["id"]: c for c in await db.classes.find({}, {"_id":0}).to_list(500)}
+    fs_ids = list({s.get("fee_structure_id") for s in students if s.get("fee_structure_id")})
+    fs_map = {f["id"]: f for f in await db.fee_structures.find({"id": {"$in": fs_ids}}, {"_id":0}).to_list(500)}
+    sids = [s["id"] for s in students]
+    receipts = await db.receipts.find({"student_id": {"$in": sids}, "status": {"$ne":"cancelled"}, "receipt_type": {"$in":["school","admission"]}}, {"_id":0}).to_list(20000)
+    # Paid amount per (student_id, quarter)
+    paid_q: Dict[str, Dict[str, float]] = {}
+    for r in receipts:
+        for line in r.get("lines", []):
+            nm = (line.get("fee_head_name") or "").lower()
+            for tag in ("q1","q2","q3"):
+                if tag in nm:
+                    paid_q.setdefault(r["student_id"], {}).setdefault(tag.upper(), 0)
+                    paid_q[r["student_id"]][tag.upper()] += float(line.get("amount", 0))
+    total_paid: Dict[str, float] = {}
+    for r in receipts:
+        if r.get("receipt_type") in ("refund","debit_voucher"): continue
+        total_paid[r["student_id"]] = total_paid.get(r["student_id"], 0) + r.get("total", 0)
+    rows = []
+    for s in students:
+        fs = fs_map.get(s["fee_structure_id"])
+        if not fs: continue
+        if quarter in ("Q1","Q2","Q3"):
+            qamt = sum(float(it.get("amount", 0)) for it in fs.get("items", []) if quarter.lower() in (it.get("fee_head_name","") or "").lower())
+            paid = paid_q.get(s["id"], {}).get(quarter, 0)
+            outstanding = qamt - paid
+        else:
+            qamt = fs.get("total", 0)
+            paid = total_paid.get(s["id"], 0)
+            outstanding = qamt - paid
+        if outstanding <= 0: continue
+        rows.append({
+            "student_id": s["id"], "admission_no": s["admission_no"], "name": s["name"],
+            "guardian_name": s.get("guardian_name"), "guardian_mobile": s.get("guardian_mobile"),
+            "department_name": dept_map.get(s["department_id"],{}).get("name"),
+            "class_name": class_map.get(s["class_id"],{}).get("name"),
+            "fee": qamt, "paid": paid, "outstanding": outstanding,
+        })
+    rows.sort(key=lambda x: (-x["outstanding"]))
+    return {"count": len(rows), "total_outstanding": sum(r["outstanding"] for r in rows), "students": rows, "quarter": quarter}
+
 @app.on_event("shutdown")
 async def on_shutdown():
     client.close()

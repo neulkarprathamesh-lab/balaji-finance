@@ -11,7 +11,14 @@ export default function Adjustments() {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState('');
   const [open, setOpen] = useState(!!sp.get('student'));
-  const [f, setF] = useState({ student_id: sp.get('student')||'', adjustment_type:'scholarship', amount:'', reason:'', fee_head_id:'' });
+  const [f, setF] = useState({
+    student_id: sp.get('student') || '',
+    adjustment_type: 'scholarship',
+    amount: sp.get('amount') || '',
+    reason: sp.get('reason') || '',
+    fee_head_id: '',
+    reminder_id: sp.get('reminder') || null,
+  });
 
   const load = () => { const p = status ? `?status=${status}` : ''; api.get(`/adjustments${p}`).then(r => setRows(r.data)); };
   useEffect(() => { load(); }, [status]);

@@ -17,6 +17,7 @@ const nav = [
   { to: '/bus-routes', label: 'Bus Routes', icon: Bus, roles: ['*'] },
   { to: '/fee-notices', label: 'Fee Notices', icon: Mail, roles: ['*'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, roles: ['*'] },
+  { to: '/defaulters', label: 'Defaulters', icon: XCircle, roles: ['*'] },
   { to: '/cancellations', label: 'Cancellations', icon: XCircle, roles: ['administrator','manager','accountant'] },
   { to: '/concessions', label: 'Concession Ledger', icon: Award, roles: ['administrator','manager','accountant'] },
   { to: '/promotion', label: 'Promotion & Rollover', icon: GraduationCap, roles: ['administrator','manager'] },

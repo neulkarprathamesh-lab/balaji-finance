@@ -145,7 +145,7 @@ function FeeReceipt({ r }) {
           <div className="font-mono font-semibold">{dateStr}</div>
           <div className="text-slate-500 uppercase tracking-widest text-[9px] mt-1">Academic Year</div>
           <div className="font-mono font-semibold">{r.academic_year}</div>
-          <div className="flex justify-end mt-1"><QRCodeSVG value={r.number} size={56} level="M" includeMargin={false} /></div>
+          <div className="flex justify-end mt-1"><QRCodeSVG value={`${window.location.origin}/lookup/${r.number}`} size={56} level="M" includeMargin={false} /></div>
         </div>
       </div>
 
