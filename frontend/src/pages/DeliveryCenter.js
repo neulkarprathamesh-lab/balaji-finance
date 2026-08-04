@@ -93,8 +93,8 @@ export default function DeliveryCenter() {
           <div>
             <div className="font-heading font-semibold text-emerald-900">Version 1.0 is production-ready</div>
             <div className="text-[13px] text-emerald-800 mt-0.5">
-              All 47 backend tests pass · 61 bus stops seeded · 41 fee structures loaded · 9 receipt types configured.
-              Every artefact below can be downloaded, archived, and used to rebuild the software independently.
+              This is the day-to-day download hub for the school — configuration exports, the latest database backup, and the ownership documents.
+              The <strong>complete source-code ZIP is delivered separately</strong> for you to store safely on the Main Server + an external drive; it is intentionally not exposed inside the running app.
             </div>
           </div>
         </div>

@@ -225,7 +225,18 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 19) — Final Delivery Center + Ownership Document
+## 2026-02-04 (continued 20) — Simplified Delivery Center + One-Shot Offline Project ZIP
+Per owner request, the software will no longer expose its own source code / installer ZIP from inside the running app (security + simplicity). The Delivery Center is now trimmed to daily-ops artefacts only:
+- **In-app Delivery Center** (Administrator → Delivery Center) now shows 4 sections:
+  - Database Package (latest backup + trigger new backup)
+  - Configuration Export (school settings / departments / classes / fee structures / receipt types / bus routes)
+  - Documentation (License & Ownership + Release Notes v1.0)
+  - Version & Audit (`/api/version`, `/api/diagnostics`)
+- **Removed** from the in-app manifest and the router: `Complete Project Source` section, `Deployment Package` section, `/api/deliverables/receipt-types-json`, `/api/deliverables/full-project-metadata`. `/downloads/BalajiConventFeeSoftware-v1.0.zip` is no longer served from the live app.
+- **New one-shot offline archive**: `/app/dist/BalajiConventFeeSoftware-v1.0-FINAL.zip` — the complete owner-portable project package (frontend, backend, docs, installers, assets, license & release notes). This is the ZIP the school stores on the Main Server + an external hard drive.
+- **Verified**: manifest returns exactly 4 sections; `/downloads/*.zip` now 404s (no longer inside the app); 47/47 pytest still passing; final offline ZIP built.
+
+
 - **New page** `/delivery-center` (Administrator only, sidebar → Delivery Center) — a single hub that lists every deliverable in categorised cards: Complete Project Source, Deployment Package, Database Package (latest backup + trigger new), Configuration Export, Receipt Templates (all 9 as JSON), Documentation (License + Release Notes + Self-Host Guide), Version & Audit. Each row shows size, last-modified date, and a Download button. PIN-gated endpoints prompt the admin at click time.
 - **New router** `/app/backend/routers/deliverables.py` with:
   - `GET /api/deliverables/manifest` — the aggregator that drives the UI.
