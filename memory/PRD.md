@@ -225,7 +225,18 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 21) — Bulk Bus Fare Update + Configuration Snapshots
+## 2026-02-04 (continued 22) — Load test + FINAL_VERIFICATION + LOAD_TEST_REPORT
+- **Load test**: seeded 1,026 test students (`LT-*` prefix) on top of the real config data, then ran a 30-second, 8-worker mixed-workload test on the LAN-equivalent endpoint (localhost:8001). Result: **121 req/s sustained, 0 errors, p95 < 165 ms on every hot endpoint** (defaulters 165ms, dashboard 133ms, students search 67ms, bus-stops 63ms, fee-structures 66ms, receipt-types 81ms).
+- WAN run through the Cloudflare-fronted preview URL was also clean (224 req in 30s, sporadic edge resets only).
+- New harness at `/app/backend/tests/load/loadtest.py` — bundled into the FINAL ZIP under `03-source-code/backend/tests/load/`. School can re-run with `python loadtest.py --load-only`.
+- **`LOAD_TEST_REPORT.md`** and **`FINAL_VERIFICATION.md`** shipped to `/app/dist/BalajiConventFeeSoftware-v1.0/` and mirrored to `/app/frontend/public/downloads/` for direct download.
+- **testing_agent iteration_5**: 60/60 tests passing (added new `test_load_verify.py` with 14 smoke tests covering every endpoint on the final checklist), zero critical/minor issues, defaulters report completed well under 3 s on the 1,026-student dataset. Cleaned leftover "TSTX" receipt type flagged by the tester.
+- FINAL ZIP rebuilt with load-test harness inside; SHA-256 recomputed and included in FINAL_VERIFICATION.md.
+
+## Version 1.0 — READY FOR PRODUCTION
+Load-tested. Verified by an independent testing agent. Full ownership package delivered.
+
+
 ### Bulk Bus Fare Update
 - New `POST /api/bus-stops/bulk-update` (admin/manager) with 4 operations: `increase_percent`, `decrease_percent`, `increase_fixed`, `decrease_fixed`. Optional `stop_ids[]` scope, `round_to` (₹1/10/50/100), `preview` toggle, `effective_date`, `reason`.
 - **Preview mode** returns every touched stop with `current_fare`, `new_fare`, `delta`, `students_affected`, plus totals.
