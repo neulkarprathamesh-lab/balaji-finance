@@ -23,14 +23,15 @@ import BusRoutes from '@/pages/BusRoutes';
 import FeeNotices from '@/pages/FeeNotices';
 import Profile from '@/pages/Profile';
 import Settings from '@/pages/Settings';
+import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
 const Protected = ({ children, roles }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, locked } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
-  return children;
+  return <>{children}{locked && <LockScreen />}</>;
 };
 
 export default function App() {

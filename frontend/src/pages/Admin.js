@@ -36,13 +36,28 @@ export default function Admin() {
           <div className="flex justify-end"><button data-testid="admin-new-user" onClick={()=>setOpen(true)} className="h-9 px-3 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">New User</button></div>
           <div className="bg-white border border-slate-200 rounded overflow-hidden">
             <table className="w-full dense-table">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-600"><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th></tr></thead>
+              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-600"><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr></thead>
               <tbody>
                 {users.map(u => (
                   <tr key={u.id}><td className="font-medium">{u.name}</td><td className="font-mono text-[12px]">{u.email}</td>
                     <td><span className="text-[11px] uppercase px-1.5 py-0.5 rounded bg-slate-200">{u.role}</span></td>
                     <td>{u.active !== false ? <span className="text-[11px] text-emerald-700">active</span> : <span className="text-[11px] text-red-700">disabled</span>}</td>
-                    <td className="text-[12px] text-slate-500">{new Date(u.created_at).toLocaleDateString('en-IN')}</td></tr>
+                    <td className="text-[12px] text-slate-500">{new Date(u.created_at).toLocaleDateString('en-IN')}</td>
+                    <td>
+                      {u.email !== 'neulkarprathamesh@gmail.com' && (
+                        <button
+                          data-testid={`user-toggle-${u.id}`}
+                          onClick={async () => {
+                            const willDisable = u.active !== false;
+                            if (!window.confirm(`${willDisable ? 'Suspend' : 'Reactivate'} ${u.name}? Their audit history stays intact.`)) return;
+                            try { await api.patch(`/users/${u.id}`, { active: !willDisable }); toast.success(willDisable ? 'User suspended' : 'User reactivated'); load(); }
+                            catch (e) { toast.error(e?.response?.data?.detail || 'Failed'); }
+                          }}
+                          className={`text-xs px-2 py-0.5 rounded ${u.active !== false ? 'border border-red-300 text-red-700 hover:bg-red-50' : 'border border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}
+                        >{u.active !== false ? 'Suspend' : 'Reactivate'}</button>
+                      )}
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>

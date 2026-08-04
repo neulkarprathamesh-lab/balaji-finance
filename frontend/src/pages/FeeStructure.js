@@ -11,6 +11,7 @@ export default function FeeStructure() {
   const [dept, setDept] = useState('');
   const [cls, setCls] = useState('');
   const [items, setItems] = useState([]);
+  const [dup, setDup] = useState(null);
 
   useEffect(() => {
     api.get('/departments').then(r => setDepts(r.data));
@@ -70,15 +71,69 @@ export default function FeeStructure() {
             {structures.map(s => {
               const d = depts.find(x=>x.id===s.department_id);
               const c = classes.find(x=>x.id===s.class_id);
-              return <div key={s.id} className="p-3 border-b border-slate-100 text-sm">
-                <div className="font-medium">{d?.name} · {c?.name}</div>
-                <div className="text-xs text-slate-500">{s.academic_year} · <span className="font-mono tabular font-medium text-slate-900">{inr(s.total)}</span></div>
+              return <div key={s.id} className="p-3 border-b border-slate-100 text-sm flex items-center justify-between gap-2">
+                <div>
+                  <div className="font-medium">{d?.name} · {c?.name}</div>
+                  <div className="text-xs text-slate-500">{s.academic_year} · <span className="font-mono tabular font-medium text-slate-900">{inr(s.total)}</span></div>
+                </div>
+                <button
+                  data-testid={`fs-dup-${s.id}`}
+                  onClick={() => setDup(s)}
+                  className="text-xs h-7 px-2 border border-slate-300 rounded hover:bg-slate-50 text-slate-700"
+                >Duplicate →</button>
               </div>;
             })}
           </div>
         </div>
       </div>
+      {dup && <DuplicateModal src={dup} classes={classes} depts={depts} onClose={() => setDup(null)} onDone={async () => { setDup(null); const { data } = await api.get('/fee-structures'); setStructures(data); }} />}
     </>
+  );
+}
+
+function DuplicateModal({ src, classes, depts, onClose, onDone }) {
+  const [toClass, setToClass] = useState('');
+  const [toAy, setToAy] = useState(src.academic_year || '');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!toClass) return toast.error('Select target class');
+    setBusy(true);
+    try { await api.post(`/fee-structures/${src.id}/duplicate`, { to_class_id: toClass, to_academic_year: toAy }); toast.success('Fee structure duplicated'); onDone(); }
+    catch (ex) { toast.error(ex?.response?.data?.detail || 'Failed'); }
+    setBusy(false);
+  };
+  const srcClass = classes.find(c => c.id === src.class_id);
+  const srcDept = depts.find(d => d.id === src.department_id);
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 p-4">
+      <form onSubmit={submit} className="bg-white rounded shadow-lg w-full max-w-md" data-testid="fs-dup-modal">
+        <div className="px-5 py-3 border-b border-slate-200 font-heading font-medium">Duplicate Fee Structure</div>
+        <div className="p-5 space-y-3">
+          <div className="bg-slate-50 border border-slate-200 rounded p-3 text-sm">
+            <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-1">Source</div>
+            <div>{srcDept?.name} · {srcClass?.name}</div>
+            <div className="text-[12px] text-slate-500">{src.academic_year} · Total <span className="font-mono tabular font-medium">{inr(src.total)}</span> · {src.items?.length} items</div>
+          </div>
+          <label className="block"><div className="text-[11px] uppercase tracking-wide text-slate-600 mb-1">Target Class *</div>
+            <select required className="w-full h-9 px-3 border border-slate-300 rounded text-sm bg-white" value={toClass} onChange={e=>setToClass(e.target.value)}>
+              <option value="">Select…</option>
+              {classes.filter(c => c.id !== src.class_id).map(c => {
+                const d = depts.find(x => x.id === c.department_id);
+                return <option key={c.id} value={c.id}>{d?.name} · {c.name}</option>;
+              })}
+            </select>
+          </label>
+          <label className="block"><div className="text-[11px] uppercase tracking-wide text-slate-600 mb-1">Target Academic Year</div>
+            <input className="w-full h-9 px-3 border border-slate-300 rounded text-sm bg-white" value={toAy} onChange={e=>setToAy(e.target.value)} placeholder="2026-27" />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50">
+          <button type="button" onClick={onClose} className="h-9 px-3 border border-slate-300 rounded text-sm">Cancel</button>
+          <button data-testid="fs-dup-submit" disabled={busy} className="h-9 px-4 bg-blue-600 text-white rounded text-sm disabled:opacity-60">{busy ? 'Duplicating…' : 'Duplicate'}</button>
+        </div>
+      </form>
+    </div>
   );
 }
 const inp = "w-full h-9 px-3 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none bg-white";

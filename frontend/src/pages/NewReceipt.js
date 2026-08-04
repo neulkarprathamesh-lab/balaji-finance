@@ -33,7 +33,10 @@ export default function NewReceipt() {
   const [ref, setRef] = useState('');
   const [remarks, setRemarks] = useState('');
   const [lines, setLines] = useState([{ fee_head_id: '', fee_head_name: '', amount: 0, note: '' }]);
+  const [meta, setMeta] = useState({});
   const [saving, setSaving] = useState(false);
+
+  const setM = (k, v) => setMeta({ ...meta, [k]: v });
 
   useEffect(() => {
     api.get('/departments').then(r => { setDepts(r.data); if (r.data[0]) setDept(r.data[0].id); });
@@ -67,6 +70,11 @@ export default function NewReceipt() {
         payer_name: payerName || student?.name || null,
         purpose: purpose || null, payment_mode: mode, payment_reference: ref || null,
         lines, remarks: remarks || null,
+        metadata: {
+          ...meta,
+          class_name: student ? undefined : meta.class_name,
+          session: meta.session || undefined,
+        },
       });
       toast.success(`Receipt ${data.number} issued`);
       nav(`/receipts/${data.id}`);
@@ -153,6 +161,34 @@ export default function NewReceipt() {
               <Field label="Payment Reference (Cheque/UPI/DD No.)"><input value={ref} onChange={e=>setRef(e.target.value)} className={inp} /></Field>
               <Field label="Remarks"><input value={remarks} onChange={e=>setRemarks(e.target.value)} className={inp} /></Field>
             </div>
+
+            {/* Receipt-type-specific extra fields */}
+            {type === 'bus' && (
+              <div className="grid grid-cols-3 gap-4 border-t border-slate-200 pt-4">
+                <Field label="Village Name"><input className={inp} value={meta.village_name || ''} onChange={e=>setM('village_name', e.target.value)} placeholder="Butibori / Wardha Road / ..." /></Field>
+                <Field label="For the Month of"><input className={inp} value={meta.month || ''} onChange={e=>setM('month', e.target.value)} placeholder="April 2026" /></Field>
+                <Field label="Bus No."><input className={inp} value={meta.bus_no || ''} onChange={e=>setM('bus_no', e.target.value)} placeholder="MH-31-AB-1234" /></Field>
+              </div>
+            )}
+            {type === 'debit_voucher' && (
+              <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-4">
+                <Field label="Paid to"><input className={inp} value={meta.paid_to || ''} onChange={e=>setM('paid_to', e.target.value)} placeholder="Vendor / Payee name" /></Field>
+                <Field label="A/C Head"><input className={inp} value={meta.ac_head || ''} onChange={e=>setM('ac_head', e.target.value)} placeholder="Stationery / Repairs / Salary / ..." /></Field>
+              </div>
+            )}
+            {(type === 'general_money' || type === 'general_collection') && (
+              <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-4">
+                <Field label="On Account of"><input className={inp} value={meta.on_account_of || ''} onChange={e=>setM('on_account_of', e.target.value)} placeholder="Donation / Certificate fee / ..." /></Field>
+                <Field label="Class (if applicable)"><input className={inp} value={meta.class_name || ''} onChange={e=>setM('class_name', e.target.value)} /></Field>
+              </div>
+            )}
+            {activeType.needsStudent && student && (
+              <div className="grid grid-cols-3 gap-4 border-t border-slate-200 pt-4">
+                <Field label="Class"><input className={inp} value={meta.class_name || ''} onChange={e=>setM('class_name', e.target.value)} placeholder="Auto: current class" /></Field>
+                {type === 'admission' && <Field label="Session"><input className={inp} value={meta.session || ''} onChange={e=>setM('session', e.target.value)} placeholder="2026-27" /></Field>}
+                {dept && depts.find(d=>d.id===dept)?.code === 'JC' && <Field label="Faculti"><input className={inp} value={meta.faculti || ''} onChange={e=>setM('faculti', e.target.value)} placeholder="Science / Commerce / Arts" /></Field>}
+              </div>
+            )}
           </div>
 
           <div className="bg-white border border-slate-200 rounded">

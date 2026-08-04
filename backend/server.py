@@ -157,6 +157,7 @@ class ReceiptIn(BaseModel):
     remarks: Optional[str] = None
     linked_receipt_id: Optional[str] = None  # for refunds
     approver_id: Optional[str] = None
+    metadata: Dict[str, Any] = {}  # {village_name, month, bus_no, paid_to, ac_head, faculti, session, dd_no, on_account_of, class_name}
 
 class AdjustmentIn(BaseModel):
     student_id: str
@@ -250,6 +251,51 @@ async def update_me(body: ProfileUpdate, user = Depends(get_current_user)):
     await audit(user, "update", "profile", user["id"], {"fields": [k for k in upd.keys() if k != "password_hash"] + (["password"] if "password_hash" in upd else [])})
     fresh = await db.users.find_one({"id": user["id"]})
     return clean(fresh)
+
+class PinSetIn(BaseModel):
+    new_pin: str
+    current_password: Optional[str] = None
+    current_pin: Optional[str] = None
+
+class PinVerifyIn(BaseModel):
+    pin: str
+
+@api.get("/auth/me/pin-status")
+async def pin_status(user = Depends(get_current_user)):
+    current = await db.users.find_one({"id": user["id"]})
+    return {"has_pin": bool(current and current.get("pin_hash"))}
+
+@api.post("/auth/me/pin")
+async def set_pin(body: PinSetIn, user = Depends(get_current_user)):
+    if not body.new_pin.isdigit() or len(body.new_pin) != 4:
+        raise HTTPException(400, "PIN must be exactly 4 digits")
+    current = await db.users.find_one({"id": user["id"]})
+    if current.get("pin_hash"):
+        # Changing existing PIN — require current PIN
+        if not body.current_pin or not verify_password(body.current_pin, current["pin_hash"]):
+            raise HTTPException(400, "Current PIN is incorrect")
+    else:
+        # Setting for the first time — require password
+        if not body.current_password or not verify_password(body.current_password, current["password_hash"]):
+            raise HTTPException(400, "Current password is required to set PIN")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"pin_hash": hash_password(body.new_pin)}})
+    await audit(user, "set_pin", "user", user["id"])
+    return {"ok": True}
+
+@api.delete("/auth/me/pin")
+async def remove_pin(user = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$unset": {"pin_hash": ""}})
+    await audit(user, "remove_pin", "user", user["id"])
+    return {"ok": True}
+
+@api.post("/auth/me/pin/verify")
+async def verify_pin(body: PinVerifyIn, user = Depends(get_current_user)):
+    current = await db.users.find_one({"id": user["id"]})
+    if not current or not current.get("pin_hash"):
+        raise HTTPException(400, "No PIN set")
+    if not verify_password(body.pin, current["pin_hash"]):
+        raise HTTPException(401, "Incorrect PIN")
+    return {"ok": True}
 
 # ---------------- Settings ----------------
 SETTINGS_ID = "school_settings"
@@ -368,6 +414,33 @@ async def create_fee_structure(body: FeeStructureIn, user = Depends(require_role
     doc = {"id": fid, **body.model_dump(), "total": total, "created_at": now_iso()}
     await db.fee_structures.insert_one(doc)
     await audit(user, "create", "fee_structure", fid, {"total": total})
+    return {k:v for k,v in doc.items() if k != "_id"}
+
+@api.post("/fee-structures/{fid}/duplicate")
+async def duplicate_fee_structure(fid: str, body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
+    src = await db.fee_structures.find_one({"id": fid}, {"_id":0})
+    if not src: raise HTTPException(404, "Source structure not found")
+    to_class_id = body.get("to_class_id")
+    to_academic_year = body.get("to_academic_year") or src.get("academic_year")
+    if not to_class_id: raise HTTPException(400, "to_class_id is required")
+    to_class = await db.classes.find_one({"id": to_class_id})
+    if not to_class: raise HTTPException(400, "Target class not found")
+    dup = await db.fee_structures.find_one({"class_id": to_class_id, "academic_year": to_academic_year})
+    if dup:
+        raise HTTPException(400, f"A structure already exists for that class + academic year")
+    new_id = gen_id()
+    doc = {
+        "id": new_id,
+        "department_id": to_class["department_id"],
+        "class_id": to_class_id,
+        "academic_year": to_academic_year,
+        "items": src.get("items", []),
+        "total": src.get("total", 0),
+        "cloned_from": fid,
+        "created_at": now_iso(),
+    }
+    await db.fee_structures.insert_one(doc)
+    await audit(user, "duplicate", "fee_structure", new_id, {"from": fid, "to_class": to_class_id})
     return {k:v for k,v in doc.items() if k != "_id"}
 
 # ---------------- Students ----------------
@@ -534,6 +607,7 @@ async def create_receipt(body: ReceiptIn, user = Depends(require_roles("administ
     doc = {
         "id": rid, "number": number, "receipt_type": body.receipt_type,
         "department_id": body.department_id, "department_name": dept["name"], "department_code": dept["code"],
+        "department_header1": dept.get("header_line1"), "department_header2": dept.get("header_line2"),
         "student_id": body.student_id,
         "student_snapshot": {"admission_no": student["admission_no"], "name": student["name"], "class_id": student.get("class_id")} if student else None,
         "payer_name": body.payer_name or (student["name"] if student else None),
@@ -541,6 +615,7 @@ async def create_receipt(body: ReceiptIn, user = Depends(require_roles("administ
         "lines": [l.model_dump() for l in body.lines], "total": total,
         "amount_in_words": amount_in_words_inr(total),
         "remarks": body.remarks, "linked_receipt_id": body.linked_receipt_id,
+        "metadata": body.metadata or {},
         "academic_year": ay, "cashier_id": user["id"], "cashier_name": user["name"],
         "status": "issued", "reprint_count": 0,
         "created_at": now_iso(),
@@ -987,13 +1062,26 @@ async def seed_data():
 
     if await db.departments.count_documents({}) == 0:
         depts = [
-            {"name":"English Primary","code":"EP"},
-            {"name":"Marathi Primary","code":"MP"},
-            {"name":"Secondary","code":"SEC"},
-            {"name":"Junior College","code":"JC"},
+            {"name":"English Primary","code":"EP","header_line1":"BALAJI CONVENT","header_line2":"ENGLISH PRIMARY SCHOOL"},
+            {"name":"Marathi Primary","code":"MP","header_line1":"BALAJI CONVENT","header_line2":"MARATHI PRIMARY SCHOOL"},
+            {"name":"Secondary","code":"SEC","header_line1":"BALAJI CONVENT SECONDARY SCHOOL","header_line2":"SELF FINANCING"},
+            {"name":"Junior College","code":"JC","header_line1":"BALAJI CONVENT JR. COLLEGE","header_line2":"ARTS, COMMERCE, SCIENCE & BI-FOCAL"},
         ]
         for d in depts:
             await db.departments.insert_one({"id": gen_id(), **d, "academic_year":"2026-27", "created_at": now_iso()})
+    else:
+        # Migration: add header_line1/2 defaults if missing
+        header_defaults = {
+            "EP": ("BALAJI CONVENT", "ENGLISH PRIMARY SCHOOL"),
+            "MP": ("BALAJI CONVENT", "MARATHI PRIMARY SCHOOL"),
+            "SEC": ("BALAJI CONVENT SECONDARY SCHOOL", "SELF FINANCING"),
+            "JC": ("BALAJI CONVENT JR. COLLEGE", "ARTS, COMMERCE, SCIENCE & BI-FOCAL"),
+        }
+        for code, (h1, h2) in header_defaults.items():
+            await db.departments.update_one(
+                {"code": code, "$or": [{"header_line1": {"$exists": False}}, {"header_line1": None}, {"header_line1": ""}]},
+                {"$set": {"header_line1": h1, "header_line2": h2}},
+            )
 
     if await db.fee_heads.count_documents({}) == 0:
         heads = [

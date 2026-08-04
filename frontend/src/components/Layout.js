@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon
 } from 'lucide-react';
 
 const nav = [
@@ -33,7 +33,7 @@ const roleColors = {
 };
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, lock } = useAuth();
   const navigate = useNavigate();
 
   const visible = nav.filter(n => n.roles.includes('*') || n.roles.includes(user?.role));
@@ -86,6 +86,13 @@ export default function Layout() {
             className="w-full flex items-center gap-2 px-2 py-1.5 text-[13px] text-slate-300 hover:text-white hover:bg-slate-800 rounded mb-0.5"
           >
             <UserIcon className="w-4 h-4" /> My Profile
+          </button>
+          <button
+            data-testid="lock-btn"
+            onClick={lock}
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-[13px] text-slate-300 hover:text-white hover:bg-slate-800 rounded mb-0.5"
+          >
+            <LockIcon className="w-4 h-4" /> Lock Screen
           </button>
           <button
             data-testid="logout-btn"
