@@ -225,7 +225,23 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 18) — Bus Stop Manager + Student Bus Card + Receipt Bus Row + Structure Preview
+## 2026-02-04 (continued 19) — Final Delivery Center + Ownership Document
+- **New page** `/delivery-center` (Administrator only, sidebar → Delivery Center) — a single hub that lists every deliverable in categorised cards: Complete Project Source, Deployment Package, Database Package (latest backup + trigger new), Configuration Export, Receipt Templates (all 9 as JSON), Documentation (License + Release Notes + Self-Host Guide), Version & Audit. Each row shows size, last-modified date, and a Download button. PIN-gated endpoints prompt the admin at click time.
+- **New router** `/app/backend/routers/deliverables.py` with:
+  - `GET /api/deliverables/manifest` — the aggregator that drives the UI.
+  - `GET /api/deliverables/license` — streams the signed LICENSE_AND_OWNERSHIP.md.
+  - `GET /api/deliverables/release-notes` — streams RELEASE_NOTES_v1.0.md.
+  - `GET /api/deliverables/receipt-types-json` — every receipt-type record in one JSON.
+  - `GET /api/deliverables/full-project-metadata` — routers, collections, env-vars, build commands (for developer onboarding).
+- **Ownership document** (`LICENSE_AND_OWNERSHIP.md`) shipped in the dist ZIP and downloadable individually — declares Balaji Convent as sole owner, explicitly states no license locks / no telemetry / no kill switches / no obfuscation, and lists the freedoms guaranteed (maintain, modify, enhance, rebuild, third-party dev, internal distribution).
+- **Release Notes v1.0** (`RELEASE_NOTES_v1.0.md`) — highlights, architecture, verification results (47/47 tests, 23/23 routes), known limitations, support pointers.
+- **Both files** also copied to `/app/frontend/public/downloads/` so they're publicly linkable, and packaged into the fresh dist ZIP (15 MB, published to `/downloads/BalajiConventFeeSoftware-v1.0.zip`).
+- **Verified**: `/api/deliverables/manifest` returns 7 sections with app_version=1.0.0, license endpoint streams the MD file (HTTP 200), receipt-types JSON returns all 9 types. 47/47 pytest passing.
+
+## Version 1.0 — Production Ready
+Every agreed feature is implemented, every menu / button works, all backend tests are green, and the software has been declared owner-portable via the on-page License & Ownership section.
+
+
 - **Bus Stop Manager UI** (`/bus-stops`, admin/manager/accountant): full CRUD for stops. Add via modal (auto-locks stop_no on edit), inline Edit, Deactivate/Activate toggle, and Delete (admin-only, refuses if any student is still assigned). Live search on number or name. Header shows totals + average monthly fare.
 - **Backend endpoints** added: `POST /api/bus-stops`, `PATCH /api/bus-stops/{id}`, `DELETE /api/bus-stops/{id}` — all fully role-gated and audited. Delete rejects with a friendly 409 when the stop still has students assigned.
 - **Student Detail Bus Card**: `/students/:id` now shows a dedicated Bus Pickup card next to the Fee Structure card — stop number, name and monthly fare, or a "Not on the school bus" hint. `GET /students/{sid}/ledger` now denormalises the current `monthly_fee` from the bus-stops master so the card always reflects the latest fare, even if the school updated it.

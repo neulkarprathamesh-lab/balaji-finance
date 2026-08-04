@@ -36,6 +36,7 @@ const nav = [
   { to: '/kiosk-poster', label: 'Kiosk QR Poster', icon: BookOpen, roles: ['administrator','manager','accountant'] },
   { to: '/settings', label: 'Settings', icon: Settings2, roles: ['administrator'] },
   { to: '/diagnostics', label: 'System Diagnostics', icon: Stethoscope, roles: ['*'] },
+  { to: '/delivery-center', label: 'Delivery Center', icon: Rocket, roles: ['administrator'] },
   { to: '/admin', label: 'Administration', icon: Shield, roles: ['administrator'] },
 ];
 
