@@ -28,7 +28,7 @@ export default function FeeStructure() {
     setSeeding(true);
     try {
       const { data } = await api.post('/fee-structures/seed-2026');
-      toast.success(`✓ ${data.structures_created} structures created · ${data.classes_created} new classes · ${data.skipped} skipped`);
+      toast.success(`✓ ${data.structures_created} structures created · ${data.classes_created} new classes · ${data.skipped} skipped (of ${data.total_rows} rows in PDF)`);
       await reload();
     } catch (e) { toast.error(e?.response?.data?.detail || 'Failed'); }
     setSeeding(false);

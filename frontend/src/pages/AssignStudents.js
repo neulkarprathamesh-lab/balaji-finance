@@ -50,7 +50,7 @@ export default function AssignStudents() {
       const { data } = await api.post('/students/bulk-reassign', {
         student_ids: selectedIds, to_class_id: toClass, to_fee_structure_id: toFs || null,
       });
-      toast.success(`${data.reassigned} students reassigned`);
+      toast.success(`✓ ${data.reassigned} of ${selectedIds.length} students reassigned`);
       setRows([]); setSelected({}); setToClass(''); setToFs('');
     } catch (e) { toast.error(e?.response?.data?.detail || 'Failed'); }
     setBusy(false);
@@ -115,7 +115,9 @@ export default function AssignStudents() {
               </label>
             )}
             <button data-testid="as-submit" onClick={submit} disabled={busy || !toClass || selectedIds.length===0} className="w-full h-10 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded text-sm">
-              {busy ? 'Moving…' : `Move ${selectedIds.length} Student${selectedIds.length===1?'':'s'}`}
+              {busy ? (
+                <span className="inline-flex items-center gap-2"><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span> Moving {selectedIds.length}…</span>
+              ) : `Move ${selectedIds.length} Student${selectedIds.length===1?'':'s'}`}
             </button>
           </div>
         </div>

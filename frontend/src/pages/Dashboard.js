@@ -34,6 +34,16 @@ export default function Dashboard() {
     <>
       <PageHeader title="Dashboard" subtitle={new Date().toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric' })} />
       <div className="p-6 space-y-6">
+        {d.pending_big_waivers > 0 && (
+          <div className="bg-amber-50 border-l-4 border-amber-500 rounded p-4 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-700 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-semibold text-amber-900">{d.pending_big_waivers} high-value waiver{d.pending_big_waivers===1?'':'s'} pending administrator approval</div>
+              <div className="text-[13px] text-amber-800">These exceed the manager cap and need an admin's decision before they can be applied.</div>
+            </div>
+            <button onClick={() => nav('/adjustments')} className="h-9 px-3 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded">Review →</button>
+          </div>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <KPI testid="kpi-collection" label="Today's Collection" value={inr(d.collection_today)} hint={`${d.receipts_today_count} receipts issued`} icon={TrendingUp} tone="primary" />
           <KPI testid="kpi-receipts" label="Receipts Today" value={d.receipts_today_count} icon={Receipt} />

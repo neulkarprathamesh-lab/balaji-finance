@@ -718,28 +718,48 @@ async def approve_adjustment(aid: str, user = Depends(require_roles("administrat
 
 @api.get("/public/student-lookup/{admission_no}")
 async def public_student_lookup(admission_no: str):
-    """View-only ledger for a student — used by Fee Notice QR."""
+    """View-only ledger for a student — used by Fee Notice QR. Includes siblings under same guardian_mobile."""
     s = await db.students.find_one({"admission_no": admission_no}, {"_id": 0})
     if not s: raise HTTPException(404, "Student not found")
-    receipts = await db.receipts.find({"student_id": s["id"], "status": {"$ne": "cancelled"}},
-                                      {"_id": 0, "cashier_id": 0}).sort("created_at", -1).to_list(200)
-    fs = None
-    if s.get("fee_structure_id"):
-        fs = await db.fee_structures.find_one({"id": s["fee_structure_id"]}, {"_id": 0})
-    paid = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") not in ("refund", "debit_voucher"))
-    refunded = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") == "refund")
-    adjustments = await db.adjustments.find({"student_id": s["id"], "status": "approved"}, {"_id": 0}).to_list(100)
-    adjusted = sum(a.get("amount", 0) for a in adjustments)
-    total_fee = fs.get("total", 0) if fs else 0
-    return {
-        "student": {"admission_no": s["admission_no"], "name": s["name"], "guardian_name": s.get("guardian_name"), "guardian_mobile": s.get("guardian_mobile")},
-        "ledger": {
-            "total_fee": total_fee, "paid": paid, "adjusted": adjusted, "refunded": refunded,
-            "outstanding": max(0, total_fee - paid - adjusted + refunded),
-            "receipts": [{"number": x["number"], "type": x.get("receipt_type"), "date": x.get("created_at"), "total": x.get("total"), "mode": x.get("payment_mode")} for x in receipts[:20]],
-            "receipts_count": len(receipts),
+    guardian_mobile = s.get("guardian_mobile")
+    # Find siblings sharing the same guardian_mobile (if provided)
+    siblings_query = {"status": "active"}
+    if guardian_mobile:
+        siblings_query["guardian_mobile"] = guardian_mobile
+    else:
+        siblings_query["id"] = s["id"]
+    all_students = await db.students.find(siblings_query, {"_id": 0}).to_list(20)
+
+    async def _ledger(stu):
+        receipts = await db.receipts.find({"student_id": stu["id"], "status": {"$ne": "cancelled"}},
+                                          {"_id": 0, "cashier_id": 0}).sort("created_at", -1).to_list(200)
+        fs = None
+        if stu.get("fee_structure_id"):
+            fs = await db.fee_structures.find_one({"id": stu["fee_structure_id"]}, {"_id": 0})
+        paid = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") not in ("refund", "debit_voucher"))
+        refunded = sum(x.get("total", 0) for x in receipts if x.get("receipt_type") == "refund")
+        adjustments = await db.adjustments.find({"student_id": stu["id"], "status": "approved"}, {"_id": 0}).to_list(100)
+        adjusted = sum(a.get("amount", 0) for a in adjustments)
+        total_fee = fs.get("total", 0) if fs else 0
+        return {
+            "student": {"admission_no": stu["admission_no"], "name": stu["name"], "guardian_name": stu.get("guardian_name"), "guardian_mobile": stu.get("guardian_mobile")},
+            "ledger": {
+                "total_fee": total_fee, "paid": paid, "adjusted": adjusted, "refunded": refunded,
+                "outstanding": max(0, total_fee - paid - adjusted + refunded),
+                "receipts": [{"number": x["number"], "type": x.get("receipt_type"), "date": x.get("created_at"), "total": x.get("total"), "mode": x.get("payment_mode")} for x in receipts[:10]],
+                "receipts_count": len(receipts),
+            }
         }
+
+    children = [await _ledger(x) for x in all_students]
+    combined = {
+        "total_fee": sum(c["ledger"]["total_fee"] for c in children),
+        "paid": sum(c["ledger"]["paid"] for c in children),
+        "adjusted": sum(c["ledger"]["adjusted"] for c in children),
+        "refunded": sum(c["ledger"]["refunded"] for c in children),
+        "outstanding": sum(c["ledger"]["outstanding"] for c in children),
     }
+    return {"guardian_mobile": guardian_mobile, "children": children, "combined": combined}
 
 @api.post("/adjustments/{aid}/reject")
 async def reject_adjustment(aid: str, body: Dict[str,str], user = Depends(require_roles("administrator","manager"))):
@@ -843,6 +863,7 @@ async def dashboard(user = Depends(get_current_user)):
         "receipts_today_count": len([r for r in receipts_today if r.get("receipt_type") not in ("refund","debit_voucher")]),
         "pending_approvals": pending_adj + pending_ext,
         "pending_adjustments": pending_adj, "pending_extensions": pending_ext,
+        "pending_big_waivers": await db.adjustments.count_documents({"status":"pending","amount":{"$gt": float((await get_settings_doc()).get("manager_waiver_cap", 5000) or 5000)}}),
         "due_today": due_today, "due_tomorrow": due_tomorrow, "overdue": overdue,
         "recent_receipts": recent,
         "dept_totals_today": [{"department": k, "total": v} for k,v in dept_totals.items()],

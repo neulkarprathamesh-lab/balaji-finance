@@ -119,7 +119,7 @@ BC-EP-100,Sample Student,EP,Class 3,Guardian Name,9876543210`;
     try {
       const { data } = await api.post('/students/bulk-import', { rows });
       setResult(data);
-      toast.success(`${data.created} created, ${data.skipped} skipped, ${data.errors.length} errors`);
+      toast.success(`✓ ${data.created} of ${data.total} added · ${data.skipped} duplicates · ${data.errors.length} errors`);
     } catch (e) { toast.error(e?.response?.data?.detail || 'Import failed'); }
     setBusy(false);
   };
@@ -158,7 +158,9 @@ BC-EP-100,Sample Student,EP,Class 3,Guardian Name,9876543210`;
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50">
           <button type="button" onClick={onClose} className="h-9 px-3 border border-slate-300 rounded text-sm hover:bg-white">Close</button>
-          <button data-testid="bulk-import-submit" disabled={busy} onClick={submit} className="h-9 px-4 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-60">{busy ? 'Importing…' : 'Import'}</button>
+          <button data-testid="bulk-import-submit" disabled={busy} onClick={submit} className="h-9 px-4 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-60">{busy ? (
+            <span className="flex items-center gap-2"><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span> Importing… please wait</span>
+          ) : 'Import'}</button>
         </div>
       </div>
     </div>
