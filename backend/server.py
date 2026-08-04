@@ -344,6 +344,43 @@ async def create_student(body: StudentIn, user = Depends(require_roles("administ
     await audit(user, "create", "student", sid, {"admission_no": body.admission_no})
     return {k:v for k,v in doc.items() if k != "_id"}
 
+@api.post("/students/bulk-import")
+async def bulk_import_students(body: Dict[str, Any], user = Depends(require_roles("administrator","manager","accountant"))):
+    """Body: {rows: [ {admission_no, name, department_code, class_name, guardian_name, guardian_mobile, ...} ]}"""
+    rows = body.get("rows", [])
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(400, "rows must be a non-empty array")
+    depts = {d["code"]: d for d in await db.departments.find({}, {"_id":0}).to_list(100)}
+    classes = await db.classes.find({}, {"_id":0}).to_list(500)
+    created, skipped, errors = 0, 0, []
+    for idx, r in enumerate(rows):
+        try:
+            adm = str(r.get("admission_no","")).strip()
+            name = str(r.get("name","")).strip()
+            dcode = str(r.get("department_code","")).strip().upper()
+            cname = str(r.get("class_name","")).strip()
+            if not adm or not name or not dcode or not cname:
+                errors.append({"row": idx+1, "error": "admission_no, name, department_code, class_name required"}); continue
+            if await db.students.find_one({"admission_no": adm}):
+                skipped += 1; continue
+            d = depts.get(dcode)
+            if not d:
+                errors.append({"row": idx+1, "error": f"unknown department code {dcode}"}); continue
+            cls = next((c for c in classes if c["department_id"]==d["id"] and c["name"].lower()==cname.lower()), None)
+            if not cls:
+                errors.append({"row": idx+1, "error": f"unknown class {cname} in {dcode}"}); continue
+            await db.students.insert_one({
+                "id": gen_id(), "admission_no": adm, "name": name,
+                "department_id": d["id"], "class_id": cls["id"],
+                "guardian_name": r.get("guardian_name"), "guardian_mobile": str(r.get("guardian_mobile","") or ""),
+                "address": r.get("address"), "status":"active", "created_at": now_iso(),
+            })
+            created += 1
+        except Exception as e:
+            errors.append({"row": idx+1, "error": str(e)})
+    await audit(user, "bulk_import", "student", "", {"created": created, "skipped": skipped, "errors": len(errors)})
+    return {"created": created, "skipped": skipped, "errors": errors, "total": len(rows)}
+
 @api.patch("/students/{sid}")
 async def update_student(sid: str, body: Dict[str,Any], user = Depends(require_roles("administrator","manager","accountant"))):
     upd = {k:v for k,v in body.items() if k in ("name","class_id","section","guardian_name","guardian_mobile","address","fee_structure_id","bus_route","status")}
@@ -629,6 +666,47 @@ async def collection_report(
 @api.get("/reports/audit")
 async def audit_report(limit: int = 500, user = Depends(require_roles("administrator","manager","accountant"))):
     return await db.audit_log.find({}, {"_id":0}).sort("timestamp",-1).limit(limit).to_list(limit)
+
+@api.get("/reports/cancellations")
+async def cancellation_report(
+    date_from: Optional[str] = None, date_to: Optional[str] = None,
+    user = Depends(require_roles("administrator","manager","accountant")),
+):
+    today = date.today().isoformat()
+    if not date_from: date_from = "2000-01-01"
+    if not date_to: date_to = today
+    q = {"status": "cancelled", "cancelled_at": {"$gte": date_from, "$lte": date_to + "T23:59:59"}}
+    rows = await db.receipts.find(q, {"_id":0}).sort("cancelled_at", -1).to_list(2000)
+    total = sum(r.get("total",0) for r in rows)
+    return {"rows": rows, "count": len(rows), "total_cancelled": total}
+
+@api.get("/reports/concessions")
+async def concession_ledger(
+    date_from: Optional[str] = None, date_to: Optional[str] = None,
+    department_id: Optional[str] = None,
+    user = Depends(require_roles("administrator","manager","accountant")),
+):
+    today = date.today().isoformat()
+    if not date_from: date_from = today[:7] + "-01"
+    if not date_to: date_to = today
+    q: Dict[str, Any] = {"status": "approved", "approved_at": {"$gte": date_from, "$lte": date_to + "T23:59:59"}}
+    rows = await db.adjustments.find(q, {"_id":0}).sort("approved_at", -1).to_list(5000)
+    # Enrich with student
+    sids = list({r["student_id"] for r in rows if r.get("student_id")})
+    students = {s["id"]: s for s in await db.students.find({"id":{"$in": sids}}, {"_id":0}).to_list(len(sids) or 1)}
+    if department_id:
+        rows = [r for r in rows if students.get(r.get("student_id"), {}).get("department_id") == department_id]
+    for r in rows:
+        r["student"] = students.get(r.get("student_id"))
+    total = sum(r.get("amount", 0) for r in rows)
+    by_type: Dict[str, float] = {}
+    by_month: Dict[str, float] = {}
+    for r in rows:
+        t = r.get("adjustment_type","-")
+        by_type[t] = by_type.get(t, 0) + r.get("amount", 0)
+        m = (r.get("approved_at") or "")[:7]
+        by_month[m] = by_month.get(m, 0) + r.get("amount", 0)
+    return {"rows": rows, "count": len(rows), "total": total, "by_type": by_type, "by_month": by_month}
 
 # ---------------- Seed ----------------
 async def seed_data():

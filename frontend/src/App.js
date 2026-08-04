@@ -16,6 +16,8 @@ import Reminders from '@/pages/Reminders';
 import Reports from '@/pages/Reports';
 import FeeStructure from '@/pages/FeeStructure';
 import Admin from '@/pages/Admin';
+import Cancellations from '@/pages/Cancellations';
+import Concessions from '@/pages/Concessions';
 import '@/index.css';
 
 const Protected = ({ children, roles }) => {
@@ -43,6 +45,8 @@ export default function App() {
             <Route path="extensions" element={<Extensions />} />
             <Route path="reminders" element={<Reminders />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="cancellations" element={<Protected roles={['administrator','manager','accountant']}><Cancellations /></Protected>} />
+            <Route path="concessions" element={<Protected roles={['administrator','manager','accountant']}><Concessions /></Protected>} />
             <Route path="fee-structure" element={<Protected roles={['administrator','manager','accountant']}><FeeStructure /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
           </Route>

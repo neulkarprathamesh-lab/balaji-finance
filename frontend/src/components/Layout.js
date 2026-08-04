@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, Settings, LogOut, School, Wallet, Shield
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award
 } from 'lucide-react';
 
 const nav = [
@@ -15,6 +15,8 @@ const nav = [
   { to: '/extensions', label: 'Payment Extensions', icon: CalendarClock, roles: ['*'] },
   { to: '/reminders', label: 'Reminders', icon: Bell, roles: ['*'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, roles: ['*'] },
+  { to: '/cancellations', label: 'Cancellations', icon: XCircle, roles: ['administrator','manager','accountant'] },
+  { to: '/concessions', label: 'Concession Ledger', icon: Award, roles: ['administrator','manager','accountant'] },
   { to: '/fee-structure', label: 'Fee Structure', icon: Wallet, roles: ['administrator','manager','accountant'] },
   { to: '/admin', label: 'Administration', icon: Shield, roles: ['administrator'] },
 ];
@@ -37,9 +39,7 @@ export default function Layout() {
       <aside className="w-60 bg-slate-900 text-slate-100 flex flex-col no-print">
         <div className="px-5 py-5 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded bg-blue-600 flex items-center justify-center">
-              <School className="w-5 h-5" strokeWidth={1.8} />
-            </div>
+            <img src="https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg" alt="Balaji Convent" className="w-10 h-10 rounded-full object-cover ring-1 ring-slate-700" />
             <div>
               <div className="font-heading font-semibold text-[15px] leading-tight">Balaji Convent</div>
               <div className="text-[11px] text-slate-400 tracking-wide">FEE MANAGEMENT</div>

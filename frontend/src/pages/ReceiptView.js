@@ -42,13 +42,16 @@ export default function ReceiptView() {
 
       <div className="max-w-3xl mx-auto p-6">
         <div className="print-page bg-white border border-slate-300 p-8 shadow-sm">
-          <div className="text-center border-b-2 border-slate-900 pb-3 mb-4">
+          <div className="flex items-center justify-center gap-4 border-b-2 border-slate-900 pb-3 mb-4">
+            <img src="https://customer-assets-0z36b82j.emergentagent.net/job_finance-hub-school/artifacts/ce0kfh6k_schoolo%20logo.jpeg" alt="logo" className="w-16 h-16 rounded-full object-cover" />
+            <div className="text-center">
             <div className="font-heading text-2xl font-bold tracking-tight">BALAJI CONVENT & JUNIOR COLLEGE</div>
             <div className="text-[12px] text-slate-700">Butibori, Nagpur · {r.department_name}</div>
             <div className="text-[11px] tracking-widest uppercase mt-1 text-slate-600">
               {r.receipt_type === 'debit_voucher' ? 'Debit Voucher' : 'Money Receipt'}
               {r.status === 'cancelled' && <span className="ml-2 text-red-600">· CANCELLED</span>}
               {r.reprint_count > 0 && <span className="ml-2 text-amber-700">· DUPLICATE (Reprint #{r.reprint_count})</span>}
+            </div>
             </div>
           </div>
 

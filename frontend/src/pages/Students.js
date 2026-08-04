@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
-import { Search, Plus, X } from 'lucide-react';
+import { Search, Plus, X, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 
 export default function Students() {
   const [rows, setRows] = useState([]);
@@ -11,6 +12,7 @@ export default function Students() {
   const [classes, setClasses] = useState([]);
   const [dept, setDept] = useState('');
   const [openNew, setOpenNew] = useState(false);
+  const [openImport, setOpenImport] = useState(false);
   const nav = useNavigate();
 
   const load = () => {
@@ -32,9 +34,14 @@ export default function Students() {
   return (
     <>
       <PageHeader title="Students" subtitle={`${rows.length} shown`} actions={
-        <button data-testid="students-new" onClick={() => setOpenNew(true)} className="h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded flex items-center gap-1.5">
-          <Plus className="w-4 h-4" /> Add Student
-        </button>
+        <div className="flex gap-2">
+          <button data-testid="students-import" onClick={() => setOpenImport(true)} className="h-9 px-3 border border-slate-300 text-slate-800 text-sm rounded flex items-center gap-1.5 hover:bg-white">
+            <Upload className="w-4 h-4" /> Bulk Import
+          </button>
+          <button data-testid="students-new" onClick={() => setOpenNew(true)} className="h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> Add Student
+          </button>
+        </div>
       } />
       <div className="p-6 space-y-4">
         <div className="bg-white border border-slate-200 rounded p-4 flex gap-3 items-end">
@@ -80,7 +87,81 @@ export default function Students() {
       </div>
 
       {openNew && <NewStudent depts={depts} classes={classes} onClose={() => { setOpenNew(false); load(); }} />}
+      {openImport && <BulkImport depts={depts} onClose={() => { setOpenImport(false); load(); }} />}
     </>
+  );
+}
+
+function BulkImport({ depts, onClose }) {
+  const [text, setText] = useState('');
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const template = `admission_no,name,department_code,class_name,guardian_name,guardian_mobile
+BC-EP-100,Sample Student,EP,Class 3,Guardian Name,9876543210`;
+
+  const parseCSV = (raw) => {
+    const lines = raw.trim().split(/\r?\n/);
+    if (lines.length < 2) return [];
+    const headers = lines[0].split(',').map(h => h.trim());
+    return lines.slice(1).filter(l => l.trim()).map(line => {
+      const cols = line.split(',').map(c => c.trim());
+      const obj = {};
+      headers.forEach((h, i) => obj[h] = cols[i] || '');
+      return obj;
+    });
+  };
+
+  const submit = async () => {
+    const rows = parseCSV(text);
+    if (!rows.length) { toast.error('No rows parsed. Check the CSV format.'); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.post('/students/bulk-import', { rows });
+      setResult(data);
+      toast.success(`${data.created} created, ${data.skipped} skipped, ${data.errors.length} errors`);
+    } catch (e) { toast.error(e?.response?.data?.detail || 'Import failed'); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded shadow-lg w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" data-testid="bulk-import">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+          <h3 className="font-heading font-medium">Bulk Import Students</h3>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 overflow-y-auto space-y-3">
+          <div className="text-sm text-slate-600">
+            Paste CSV rows below. First row must be the header. Required columns:
+            <code className="mx-1 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">admission_no, name, department_code, class_name</code>.
+            Optional: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">guardian_name, guardian_mobile, address</code>.
+          </div>
+          <div className="text-[11px] text-slate-500">Department codes: {depts.map(d => `${d.code}=${d.name}`).join(' · ')}</div>
+          <button onClick={() => setText(template)} className="text-xs text-blue-700 hover:underline">Insert template</button>
+          <textarea
+            data-testid="bulk-import-textarea"
+            rows="10" value={text} onChange={e=>setText(e.target.value)}
+            className="w-full font-mono text-[12px] border border-slate-300 rounded p-3 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none"
+            placeholder={template}
+          />
+          {result && (
+            <div className="border border-slate-200 rounded p-3 text-sm bg-slate-50">
+              <div><span className="text-slate-500">Total rows: </span><b>{result.total}</b> · <span className="text-emerald-700">created {result.created}</span> · <span className="text-amber-700">skipped {result.skipped}</span> · <span className="text-red-700">errors {result.errors.length}</span></div>
+              {result.errors.length > 0 && (
+                <ul className="mt-2 text-[12px] text-red-700 space-y-0.5 max-h-32 overflow-y-auto">
+                  {result.errors.map((e,i) => <li key={i}>Row {e.row}: {e.error}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50">
+          <button type="button" onClick={onClose} className="h-9 px-3 border border-slate-300 rounded text-sm hover:bg-white">Close</button>
+          <button data-testid="bulk-import-submit" disabled={busy} onClick={submit} className="h-9 px-4 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-60">{busy ? 'Importing…' : 'Import'}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
