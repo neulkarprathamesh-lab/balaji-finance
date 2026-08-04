@@ -39,6 +39,7 @@ import DayEnd from '@/pages/DayEnd';
 import SetupWizard from '@/pages/SetupWizard';
 import ImportExcel from '@/pages/ImportExcel';
 import ImportsHistory from '@/pages/ImportsHistory';
+import Diagnostics from '@/pages/Diagnostics';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -89,6 +90,7 @@ export default function App() {
             <Route path="import-excel" element={<Protected roles={['administrator','manager','accountant']}><ImportExcel /></Protected>} />
             <Route path="imports-history" element={<Protected roles={['administrator','manager','accountant']}><ImportsHistory /></Protected>} />
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
+            <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="dashboard" element={<Navigate to="/" replace />} />
           </Route>
           <Route path="/receipts/:id" element={<Protected><ReceiptView /></Protected>} />

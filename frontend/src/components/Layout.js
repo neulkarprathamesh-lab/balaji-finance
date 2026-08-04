@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 const CURRENT_VERSION = '1.0.0';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen, Sunset, Rocket
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen, Sunset, Rocket, Stethoscope
 } from 'lucide-react';
 
 const nav = [
@@ -31,6 +31,7 @@ const nav = [
   { to: '/fee-brochure', label: 'Fee Brochure', icon: BookOpen, roles: ['*'] },
   { to: '/kiosk-poster', label: 'Kiosk QR Poster', icon: BookOpen, roles: ['administrator','manager','accountant'] },
   { to: '/settings', label: 'Settings', icon: Settings2, roles: ['administrator'] },
+  { to: '/diagnostics', label: 'System Diagnostics', icon: Stethoscope, roles: ['*'] },
   { to: '/admin', label: 'Administration', icon: Shield, roles: ['administrator'] },
 ];
 

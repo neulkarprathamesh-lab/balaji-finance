@@ -225,7 +225,26 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 12) — Router Split + Fresh Install Verification
+## 2026-02-04 (continued 13) — System Diagnostics tool
+- **Added** `GET /api/diagnostics` in a new `routers/diagnostics.py` (63 lines) — runs six server-side checks and returns a structured report:
+  1. Database connection (Mongo ping + latency)
+  2. Database version (MongoDB build info + schema version + collection count)
+  3. Software version (app + build date)
+  4. Backup folder access (writability probe + latest backup)
+  5. Storage space (disk_usage with < 2 GB warning)
+  6. Seed data (users/students/receipts/receipt-types counts)
+- **Added** `/diagnostics` page (`pages/Diagnostics.js`) — client runs five additional probes in the browser and merges results:
+  1. Main Server connection (latency to `/api/version`)
+  2. LAN connectivity (`navigator.onLine` + network type)
+  3. Printer availability (window.print API + Test Print button)
+  4. Scanner / Camera availability (`enumerateDevices` — for kiosk QR scanning)
+  5. Browser compatibility (Chrome/Edge recommended)
+- **UI**: green/amber/red overall banner, split into "This PC (browser)" and "Main Server" cards, every row shows plain-English message ("Cannot connect to Main Server", "No camera detected", "Backup folder not writable", etc.), Test Print + Re-run All Checks buttons, printable for support hand-off.
+- **Nav**: "System Diagnostics" (Stethoscope icon) added between Settings and Administration; visible to every role so any staff member can run the check.
+- **Registered** in `server.py` router list; distribution ZIP rebuilt (4.8 MB) with the new files and re-published at `/downloads/BalajiConventFeeSoftware-v1.0.zip`.
+- **Verified**: endpoint returns overall_ok=true with 6/6 server checks passing; frontend Playwright smoke test confirms all 7 rows render and the green banner shows.
+
+
 - **Refactored** `server.py` from a 2095-line monolith into a **49-line bootstrap** + `core.py` (595 lines: DB, models, deps, PIN gates, numbering, seed, quarterly reminders) + 6 domain routers under `/app/backend/routers/`:
   - `auth.py` (157 lines) — auth/login/logout/me, PIN endpoints, users CRUD, settings, /api/version
   - `catalog.py` (289 lines) — departments, classes, fee heads, fee structures + bulk import/delete, promotion, rollover, seed-2026, imports history
