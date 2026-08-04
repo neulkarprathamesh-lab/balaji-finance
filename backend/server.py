@@ -21,6 +21,7 @@ from routers import receipts as receipts_router  # noqa: E402
 from routers import reports as reports_router  # noqa: E402
 from routers import config_io as config_io_router  # noqa: E402
 from routers import diagnostics as diagnostics_router  # noqa: E402
+import asyncio  # noqa: E402
 
 app = FastAPI(title="Balaji Convent Fee Software")
 
@@ -40,12 +41,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_scheduler_task = None
+
 @app.on_event("startup")
 async def on_startup():
+    global _scheduler_task
     await seed_data()
+    _scheduler_task = asyncio.create_task(diagnostics_router.daily_diagnostics_scheduler())
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    global _scheduler_task
+    if _scheduler_task:
+        _scheduler_task.cancel()
     client.close()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

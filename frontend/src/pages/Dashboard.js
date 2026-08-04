@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
-import { TrendingUp, Receipt, Bell, AlertTriangle, Clock, CheckCircle2 } from 'lucide-react';
+import { TrendingUp, Receipt, Bell, AlertTriangle, Clock, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
+import OnboardingPopover from '@/components/OnboardingPopover';
 
 const KPI = ({ label, value, hint, icon: Icon, tone = 'default', testid }) => {
   const tones = {
@@ -26,14 +28,40 @@ const KPI = ({ label, value, hint, icon: Icon, tone = 'default', testid }) => {
 
 export default function Dashboard() {
   const [d, setD] = useState(null);
+  const [diag, setDiag] = useState(null);
   const nav = useNavigate();
-  useEffect(() => { api.get('/dashboard').then(r => setD(r.data)); }, []);
+  const { user } = useAuth();
+  useEffect(() => {
+    api.get('/dashboard').then(r => setD(r.data));
+    api.get('/diagnostics/latest').then(r => setDiag(r.data)).catch(() => {});
+  }, []);
   if (!d) return <div className="p-8 text-sm text-slate-500">Loading…</div>;
+
+  // Overnight-fail banner: last snapshot within 30h AND failed
+  let overnightFail = null;
+  if (diag && diag.created_at && diag.overall_ok === false) {
+    const ageH = (Date.now() - new Date(diag.created_at).getTime()) / 3_600_000;
+    if (ageH < 30) overnightFail = diag;
+  }
 
   return (
     <>
       <PageHeader title="Dashboard" subtitle={new Date().toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric' })} />
+      <OnboardingPopover user={user} />
       <div className="p-6 space-y-6">
+        {overnightFail && (
+          <div className="bg-rose-50 border-l-4 border-rose-500 rounded p-4 flex items-start gap-3" data-testid="overnight-diag-banner">
+            <ShieldAlert className="w-5 h-5 text-rose-700 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-semibold text-rose-900">Overnight diagnostics found {overnightFail.failing?.length || 0} issue{(overnightFail.failing?.length || 0) === 1 ? '' : 's'}</div>
+              <div className="text-[13px] text-rose-800">
+                {(overnightFail.failing || []).slice(0,3).join(' · ') || 'One or more checks are failing'}
+                {' '}— checked {new Date(overnightFail.created_at).toLocaleString('en-IN')}.
+              </div>
+            </div>
+            <button onClick={() => nav('/diagnostics')} className="h-9 px-3 bg-rose-600 hover:bg-rose-700 text-white text-sm rounded" data-testid="overnight-diag-review">Open Diagnostics →</button>
+          </div>
+        )}
         {d.pending_big_waivers > 0 && (
           <div className="bg-amber-50 border-l-4 border-amber-500 rounded p-4 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-700 mt-0.5" />

@@ -1,30 +1,32 @@
-"""System Diagnostics — server-side checks for DB, backup folder, disk, versions."""
+"""System Diagnostics — server-side checks + daily 8 AM snapshot + onboarding flag."""
+import asyncio
 import os
 import shutil
 import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
-from fastapi import APIRouter, Depends
-from core import db, client, get_current_user, now_iso, BACKUP_DIR
+from fastapi import APIRouter, Depends, HTTPException
+from core import (
+    db, client, get_current_user, now_iso, BACKUP_DIR,
+    get_settings_doc, SETTINGS_ID, require_roles, audit,
+)
 
 router = APIRouter(prefix="/api", tags=["diagnostics"])
 
 APP_VERSION = "1.0.0"
 DATABASE_VERSION = "1"
+DAILY_SNAPSHOT_HOUR = 8   # server-local 8 AM
 
 
 def _check(name: str, ok: bool, message: str, details: Dict[str, Any] = None) -> Dict[str, Any]:
     return {"name": name, "ok": ok, "status": "ok" if ok else "fail", "message": message, "details": details or {}}
 
 
-@router.get("/diagnostics")
-async def system_diagnostics(user = Depends(get_current_user)):
-    """Runs every server-side diagnostic check and returns a structured report.
-    The frontend adds its own checks (Main Server latency, printer, camera/scanner, LAN)
-    and merges the results into a single view."""
+async def _run_server_side_checks() -> List[Dict[str, Any]]:
+    """Runs the six server-side checks. Callable from HTTP endpoint AND background scheduler."""
     checks: List[Dict[str, Any]] = []
 
-    # 1. Database connection
     try:
         t0 = time.perf_counter()
         pong = await client.admin.command("ping")
@@ -37,7 +39,6 @@ async def system_diagnostics(user = Depends(get_current_user)):
     except Exception as e:
         checks.append(_check("Database connection", False, f"Cannot reach MongoDB: {e}"))
 
-    # 2. Database version + schema version
     try:
         info = await client.admin.command("buildInfo")
         mongo_version = info.get("version", "unknown")
@@ -51,14 +52,12 @@ async def system_diagnostics(user = Depends(get_current_user)):
     except Exception as e:
         checks.append(_check("Database version", False, f"Cannot read database version: {e}"))
 
-    # 3. Software version
     checks.append(_check(
         "Software version", True,
         f"Balaji Convent Fee Software v{APP_VERSION}",
         {"app_version": APP_VERSION, "build_date": "2026-02-04"},
     ))
 
-    # 4. Backup folder access
     try:
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
         test_file = BACKUP_DIR / ".diag_write_test"
@@ -81,7 +80,6 @@ async def system_diagnostics(user = Depends(get_current_user)):
             f"Backup folder not found or inaccessible: {e}",
             {"path": str(BACKUP_DIR)}))
 
-    # 5. Storage space
     try:
         target = BACKUP_DIR if BACKUP_DIR.exists() else Path("/app")
         total, used, free = shutil.disk_usage(target)
@@ -98,7 +96,6 @@ async def system_diagnostics(user = Depends(get_current_user)):
     except Exception as e:
         checks.append(_check("Storage space", False, f"Cannot read disk usage: {e}"))
 
-    # 6. Data-integrity spot-checks
     try:
         users_count = await db.users.count_documents({})
         students_count = await db.students.count_documents({})
@@ -115,12 +112,122 @@ async def system_diagnostics(user = Depends(get_current_user)):
     except Exception as e:
         checks.append(_check("Seed data", False, f"Cannot read collections: {e}"))
 
+    return checks
+
+
+async def _snapshot_diagnostics(source: str, actor_name: str = "scheduler") -> Dict[str, Any]:
+    """Runs the server checks and persists a snapshot in `diagnostic_reports`. Retains last 60 snapshots."""
+    checks = await _run_server_side_checks()
     overall_ok = all(c["ok"] for c in checks)
+    failing = [c["name"] for c in checks if not c["ok"]]
+    doc = {
+        "id": f"diag-{int(time.time()*1000)}",
+        "source": source,   # "scheduler" | "manual"
+        "actor": actor_name,
+        "created_at": now_iso(),
+        "overall_ok": overall_ok,
+        "failing": failing,
+        "checks": checks,
+        "app_version": APP_VERSION,
+        "database_version": DATABASE_VERSION,
+    }
+    await db.diagnostic_reports.insert_one(dict(doc))
+    # Retain only the most-recent 60 snapshots
+    all_ids = await db.diagnostic_reports.find({}, {"id": 1, "_id": 0}).sort("created_at", -1).to_list(1000)
+    stale = [x["id"] for x in all_ids[60:]]
+    if stale:
+        await db.diagnostic_reports.delete_many({"id": {"$in": stale}})
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+# ---------------- HTTP endpoints ----------------
+@router.get("/diagnostics")
+async def system_diagnostics(user = Depends(get_current_user)):
+    checks = await _run_server_side_checks()
     return {
         "generated_at": now_iso(),
         "generated_by": user["name"],
-        "overall_ok": overall_ok,
+        "overall_ok": all(c["ok"] for c in checks),
         "server_side_checks": checks,
         "app_version": APP_VERSION,
         "database_version": DATABASE_VERSION,
     }
+
+
+@router.get("/diagnostics/latest")
+async def latest_snapshot(user = Depends(get_current_user)):
+    """Latest scheduled/manual snapshot. Dashboard uses this to flash if last night's run failed."""
+    doc = await db.diagnostic_reports.find_one({}, {"_id": 0}, sort=[("created_at", -1)])
+    return doc or {}
+
+
+@router.post("/diagnostics/run-now")
+async def run_snapshot_now(user = Depends(require_roles("administrator", "manager"))):
+    doc = await _snapshot_diagnostics(source="manual", actor_name=user["name"])
+    await audit(user, "diagnostics_snapshot", "system", doc["id"], {"overall_ok": doc["overall_ok"], "failing": doc["failing"]})
+    return doc
+
+
+# ---------------- Onboarding flag ----------------
+@router.get("/onboarding/status")
+async def onboarding_status(user = Depends(get_current_user)):
+    s = await get_settings_doc()
+    completed_at = s.get("onboarded_at")
+    dismissed_at = s.get("onboarding_dismissed_at")
+    return {
+        "first_run": not (completed_at or dismissed_at),
+        "completed_at": completed_at,
+        "dismissed_at": dismissed_at,
+    }
+
+
+@router.post("/onboarding/complete")
+async def onboarding_complete(user = Depends(require_roles("administrator"))):
+    await get_settings_doc()
+    await db.settings.update_one({"id": SETTINGS_ID},
+        {"$set": {"onboarded_at": now_iso(), "onboarded_by": user["name"]}})
+    await audit(user, "onboarding_complete", "system", SETTINGS_ID)
+    return {"ok": True}
+
+
+@router.post("/onboarding/skip")
+async def onboarding_skip(user = Depends(require_roles("administrator"))):
+    await get_settings_doc()
+    await db.settings.update_one({"id": SETTINGS_ID},
+        {"$set": {"onboarding_dismissed_at": now_iso(), "onboarding_dismissed_by": user["name"]}})
+    await audit(user, "onboarding_skip", "system", SETTINGS_ID)
+    return {"ok": True}
+
+
+# ---------------- Background scheduler ----------------
+async def _seconds_until_next_hour(hour: int) -> float:
+    now = datetime.now()
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+async def daily_diagnostics_scheduler():
+    """Sleeps until DAILY_SNAPSHOT_HOUR local time each day and stores a diagnostics snapshot.
+    Runs one initial snapshot on start so /diagnostics/latest is never empty."""
+    import logging
+    log = logging.getLogger("diagnostics.scheduler")
+    try:
+        await _snapshot_diagnostics(source="startup", actor_name="scheduler")
+        log.info("diagnostics: initial snapshot recorded")
+    except Exception as e:
+        log.error(f"diagnostics: initial snapshot failed: {e}")
+    while True:
+        try:
+            secs = await _seconds_until_next_hour(DAILY_SNAPSHOT_HOUR)
+            await asyncio.sleep(secs)
+            await _snapshot_diagnostics(source="scheduler", actor_name="scheduler")
+            log.info(f"diagnostics: {DAILY_SNAPSHOT_HOUR}AM snapshot recorded")
+            # Small buffer so we don't loop within the same hour if the run was fast
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error(f"diagnostics: scheduled snapshot failed: {e}")
+            await asyncio.sleep(300)  # back off and try again in 5 min
