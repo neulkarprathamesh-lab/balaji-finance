@@ -76,9 +76,9 @@ export default function Login() {
           </button>
           <div className="text-xs text-slate-500 border-t border-slate-200 pt-4">
             <div className="font-medium text-slate-700 mb-1">Demo accounts</div>
-            <div>cashier@balaji.local / cashier123</div>
-            <div>accountant@balaji.local / account123</div>
-            <div>manager@balaji.local / manager123</div>
+            <div>cashier@balajiconvent.in / cashier123</div>
+            <div>accountant@balajiconvent.in / account123</div>
+            <div>manager@balajiconvent.in / manager123</div>
           </div>
         </form>
       </div>

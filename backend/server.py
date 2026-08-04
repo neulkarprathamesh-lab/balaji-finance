@@ -603,10 +603,13 @@ async def dashboard(user = Depends(get_current_user)):
 
 @api.get("/reports/collection")
 async def collection_report(
-    date_from: str, date_to: str,
+    date_from: Optional[str] = None, date_to: Optional[str] = None,
     department_id: Optional[str] = None, cashier_id: Optional[str] = None,
     user = Depends(get_current_user),
 ):
+    today = date.today().isoformat()
+    if not date_from: date_from = today
+    if not date_to: date_to = today
     q: Dict[str, Any] = {"created_at":{"$gte": date_from, "$lte": date_to + "T23:59:59"}, "status":{"$ne":"cancelled"}}
     if department_id: q["department_id"] = department_id
     if cashier_id: q["cashier_id"] = cashier_id
@@ -649,10 +652,22 @@ async def seed_data():
 
     # Seed staff demo users (only if not exist)
     demo_users = [
-        ("cashier@balaji.local","cashier123","Ravi Cashier","cashier"),
-        ("accountant@balaji.local","account123","Sunita Accountant","accountant"),
-        ("manager@balaji.local","manager123","Anil Manager","manager"),
+        ("cashier@balajiconvent.in","cashier123","Ravi Cashier","cashier"),
+        ("accountant@balajiconvent.in","account123","Sunita Accountant","accountant"),
+        ("manager@balajiconvent.in","manager123","Anil Manager","manager"),
     ]
+    # Migrate any legacy .local demo emails to the new valid domain
+    for old_em, new_em in [
+        ("cashier@balaji.local","cashier@balajiconvent.in"),
+        ("accountant@balaji.local","accountant@balajiconvent.in"),
+        ("manager@balaji.local","manager@balajiconvent.in"),
+    ]:
+        legacy = await db.users.find_one({"email": old_em})
+        if legacy:
+            if await db.users.find_one({"email": new_em}):
+                await db.users.delete_one({"email": old_em})
+            else:
+                await db.users.update_one({"email": old_em}, {"$set": {"email": new_em}})
     for em, pw, nm, rl in demo_users:
         if not await db.users.find_one({"email": em}):
             await db.users.insert_one({"id": gen_id(),"email": em,"password_hash": hash_password(pw),"name": nm,"role": rl,"active": True,"created_at": now_iso()})
