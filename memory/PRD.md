@@ -225,7 +225,13 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Verified end-to-end: PATCH to EP receipt-type turning off QR + on Barcode + hiding Transaction ID + on Authorized-By + custom footer text → reloaded a real EP receipt → all four changes visible on the printed page (screenshot captured; console-log spot-checks confirm each toggle applied).
 - The same renderer engine is reused across every school-category receipt type — future types added by admins inherit the toggle system with zero code changes.
 
-## 2026-02-04 (continued 22) — Load test + FINAL_VERIFICATION + LOAD_TEST_REPORT
+## 2026-02-04 (continued 23) — Zero-Edit Client Installer + Scanner Backlog Note
+- **Client installer auto-discovery**: `install-client-pc.bat` rewritten so nothing needs to be edited before running. Uses PowerShell 7's parallel foreach to sweep the LAN's own /24 subnet (from `Get-NetIPConfiguration`), hits `http://<candidate>:8001/api/version` with a 1-second timeout, and picks the first machine that responds. Presents "Found Main Server at 192.168.1.X — use this server? [Y/n]". Falls back to a manual IP prompt that verifies `/api/version` before accepting the address. Also saves the chosen IP to `%USERPROFILE%\.balaji-fee-server.txt` for reference on re-runs.
+- Creates desktop AND Start-menu shortcuts pointing at `http://<MainIP>:3000`.
+- **Scanner integration** noted as intentionally deferred (owner-confirmed non-blocker). Current flow (Windows scanner → PDF → Upload via app) works today; a Twain/WIA one-click scan would require a native helper and is on the backlog for a future release.
+- FINAL ZIP rebuilt; SHA-256 updated.
+
+
 - **Load test**: seeded 1,026 test students (`LT-*` prefix) on top of the real config data, then ran a 30-second, 8-worker mixed-workload test on the LAN-equivalent endpoint (localhost:8001). Result: **121 req/s sustained, 0 errors, p95 < 165 ms on every hot endpoint** (defaulters 165ms, dashboard 133ms, students search 67ms, bus-stops 63ms, fee-structures 66ms, receipt-types 81ms).
 - WAN run through the Cloudflare-fronted preview URL was also clean (224 req in 30s, sporadic edge resets only).
 - New harness at `/app/backend/tests/load/loadtest.py` — bundled into the FINAL ZIP under `03-source-code/backend/tests/load/`. School can re-run with `python loadtest.py --load-only`.
