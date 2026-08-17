@@ -58,6 +58,11 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **Purge execute path** intentionally NOT invoked to preserve seeded data. Wrong-phrase attempt verified idempotent.
 - **Retest needed**: false. **Main agent self-test**: not needed.
 
+### 2026-02-17 Public Verification Portal
+- **Redesigned `Lookup.js`** — parents scan a receipt QR (points to `/lookup/{number}`) and land on a proof-of-payment page with a big VERIFIED badge (or CANCELLED banner for cancelled receipts), meta strip (receipt no, date, AY, verified-at timestamp), student card, annual ledger, and the full receipt rendered by the universal engine with a public toolbar (Print + PDF + PNG/JPEG/SVG downloads, no admin actions).
+- **`ReceiptEngine.js` + `ReceiptToolbar.js`** — accept a new `publicMode` prop that hides Cancel / two-up buttons; controls hidden when `showControls=false` (used by the portal).
+- Uses existing `/api/public/lookup/{number}` endpoint (no auth). Guarded route 404 returns a "Receipt Not Verified" screen.
+
 ## Remaining Production-Release Work (roadmap for next session)
 - P0: **Full E2E QA sweep** (testing agent across every module — Login, Dashboard, Students, Fee Collection, Every Receipt Type, Debit Voucher, Adjustments, Extensions, Bus, Reports, Verification, Parent Portal, Backup/Restore, Config Export/Import, Snapshots, Software Updates, Diagnostics, Delivery Center, Audit Logs, Global Search).
 - P0: **Debit Voucher deep enhancement** — approval workflow (threshold-based, default ₹10 000, admin-editable), person-wise ledger, dedicated DV Reports page, print_count/printed_by tracking, cheque/DD/UPI fields.

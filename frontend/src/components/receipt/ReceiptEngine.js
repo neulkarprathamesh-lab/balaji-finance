@@ -33,6 +33,7 @@ import BusReceiptBody from './templates/BusReceiptBody';
 export default function ReceiptEngine({
   r, receiptType,
   onPrint, extraActions = null, showControls = true,
+  publicMode = false,   // set true for the parent-facing verified receipt page — hides admin controls
 }) {
   const nodeRef = useRef(null);
   const [paper, setPaper] = useState(receiptType?.paper_size || DEFAULT_PAPER);
@@ -99,9 +100,10 @@ export default function ReceiptEngine({
           filename={filename}
           paper={paper}
           onPrint={onPrint}
-          twoUp={twoUp}
-          onTwoUp={() => setTwoUp(v => !v)}
+          twoUp={publicMode ? false : twoUp}
+          onTwoUp={publicMode ? undefined : () => setTwoUp(v => !v)}
           extraActions={extraActions}
+          publicMode={publicMode}
         />
       </div>
 

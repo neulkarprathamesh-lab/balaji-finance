@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 export default function ReceiptToolbar({
   nodeRef, filename, paper = 'A5',
   onPrint, twoUp = false, onTwoUp,
-  extraActions = null,
+  extraActions = null, publicMode = false,
 }) {
   const [busy, setBusy] = useState(null);
   const [showMore, setShowMore] = useState(false);
