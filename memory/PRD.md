@@ -63,6 +63,19 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **`ReceiptEngine.js` + `ReceiptToolbar.js`** — accept a new `publicMode` prop that hides Cancel / two-up buttons; controls hidden when `showControls=false` (used by the portal).
 - Uses existing `/api/public/lookup/{number}` endpoint (no auth). Guarded route 404 returns a "Receipt Not Verified" screen.
 
+### 2026-02-17 Factory Reset (Administrator-only System Maintenance)
+- **New route `/factory-reset`** (admin-only) + sidebar entry (Bomb icon).
+- **5-gate security**: role=administrator + `X-Admin-Pin` header + password re-verify + Factory Reset PIN (default `2580`, changeable via `/api/production/factory-reset/change-pin`) + confirmation phrase `DELETE ALL SCHOOL DATA`. Every wrong gate returns the right HTTP status (400/401).
+- **Auto-safety**: full DB backup via `_create_backup_zip` runs FIRST; config snapshot runs second. If the backup fails, the reset is aborted before anything is deleted.
+- **Deletes**: 13 transactional collections + all non-administrator users + every counter + staged/rollback updates on disk.
+- **Preserves**: 10 master collections (settings, departments, classes, fee_heads, fee_structures, receipt_types, bus_stops, bus_routes, config_defaults, license) + administrator account(s) + school logo.
+- **Audit**: first row of the fresh DB records the reset event (admin name, timestamps, backup id/file, deleted counts).
+- **UI**: 4-stage flow — status card → red Bomb "Begin" → full-screen WARNING with acknowledgement checkbox → password + factory PIN + phrase form → progress spinner → success screen with backup file path + counts + "Go to Dashboard" / "Open Setup Wizard". Change-PIN modal in the top-right card. Every element carries a `data-testid`.
+- **Endpoints**:
+  - `GET /api/production/factory-reset/status` — counts + `is_default_pin` flag (never leaks the PIN).
+  - `POST /api/production/factory-reset/change-pin` — password re-verify then update to a 4-8 digit PIN.
+  - `POST /api/production/factory-reset` — executes all 10 steps.
+
 ## Remaining Production-Release Work (roadmap for next session)
 - P0: **Full E2E QA sweep** (testing agent across every module — Login, Dashboard, Students, Fee Collection, Every Receipt Type, Debit Voucher, Adjustments, Extensions, Bus, Reports, Verification, Parent Portal, Backup/Restore, Config Export/Import, Snapshots, Software Updates, Diagnostics, Delivery Center, Audit Logs, Global Search).
 - P0: **Debit Voucher deep enhancement** — approval workflow (threshold-based, default ₹10 000, admin-editable), person-wise ledger, dedicated DV Reports page, print_count/printed_by tracking, cheque/DD/UPI fields.

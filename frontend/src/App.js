@@ -44,6 +44,7 @@ import Diagnostics from '@/pages/Diagnostics';
 import DeliveryCenter from '@/pages/DeliveryCenter';
 import ConfigSnapshots from '@/pages/ConfigSnapshots';
 import SoftwareUpdates from '@/pages/SoftwareUpdates';
+import FactoryReset from '@/pages/FactoryReset';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -98,6 +99,7 @@ export default function App() {
             <Route path="delivery-center" element={<Protected roles={['administrator']}><DeliveryCenter /></Protected>} />
             <Route path="config-snapshots" element={<Protected roles={['administrator','manager']}><ConfigSnapshots /></Protected>} />
             <Route path="software-updates" element={<Protected roles={['administrator','manager']}><SoftwareUpdates /></Protected>} />
+            <Route path="factory-reset" element={<Protected roles={['administrator']}><FactoryReset /></Protected>} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="dashboard" element={<Navigate to="/" replace />} />
           </Route>

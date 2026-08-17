@@ -8,7 +8,7 @@ const API = process.env.REACT_APP_BACKEND_URL;
 const CURRENT_VERSION = '1.0.0';
 import {
   LayoutDashboard, Users, Receipt, FileEdit, CalendarClock, Bell,
-  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen, Sunset, Rocket, Stethoscope
+  FileText, BarChart3, LogOut, Wallet, Shield, XCircle, Award, Bus, GraduationCap, Mail, Settings2, User as UserIcon, Lock as LockIcon, ClipboardList, BookOpen, Sunset, Rocket, Stethoscope, Bomb
 } from 'lucide-react';
 
 const nav = [
@@ -39,6 +39,7 @@ const nav = [
   { to: '/software-updates', label: 'Software Updates', icon: Rocket, roles: ['administrator','manager'] },
   { to: '/diagnostics', label: 'System Diagnostics', icon: Stethoscope, roles: ['*'] },
   { to: '/delivery-center', label: 'Delivery Center', icon: Rocket, roles: ['administrator'] },
+  { to: '/factory-reset', label: 'Factory Reset', icon: Bomb, roles: ['administrator'] },
   { to: '/admin', label: 'Administration', icon: Shield, roles: ['administrator'] },
 ];
 
