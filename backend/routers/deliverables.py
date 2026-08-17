@@ -37,7 +37,7 @@ async def deliverables_manifest(user = Depends(require_roles("administrator"))):
     Full source code is delivered separately as a one-shot project ZIP for offline archival."""
     backups = sorted(BACKUP_DIR.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True) if BACKUP_DIR.exists() else []
     latest_backup = backups[0] if backups else None
-    final_zip = DL_DIR / "BalajiFeeHub-v1.0-FINAL.zip"
+    final_zip = DL_DIR / "BalajiConventFeeSoftware_v1.0_FINAL.zip"
     from pathlib import Path as _P
     version_file = _P("/app/version.json")
     app_version = "1.0.0"
@@ -111,7 +111,7 @@ async def rebuild_zip(user = Depends(require_admin_pin)):
         raise HTTPException(500, "ZIP build timed out after 5 minutes.")
     if r.returncode != 0:
         raise HTTPException(500, f"Build failed: {r.stderr[-1000:] or r.stdout[-1000:]}")
-    zip_path = DL_DIR / "BalajiFeeHub-v1.0-FINAL.zip"
+    zip_path = DL_DIR / "BalajiConventFeeSoftware_v1.0_FINAL.zip"
     return {
         "ok": True,
         "download_url": f"/downloads/{zip_path.name}",

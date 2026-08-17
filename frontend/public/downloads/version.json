@@ -1,6 +1,1 @@
-{
-  "version": "1.0.0",
-  "published_at": "2026-02-04T00:00:00Z",
-  "download_url": "/downloads/BalajiConventFeeSoftware-v1.0.zip",
-  "notes": "Initial release. Includes cashier UI, day-end summary, family fee slip, sibling split, Excel imports, kiosk lookup, complete self-host installer package, cash-denomination sheet, PWA manifest, setup wizard and update feed."
-}
+{"version":"1.0.0","filename":"BalajiConventFeeSoftware_v1.0_FINAL.zip","size_mb":14.16,"built_at":"2026-08-17T16:40:12.624887Z"}

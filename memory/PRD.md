@@ -76,6 +76,14 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
   - `POST /api/production/factory-reset/change-pin` — password re-verify then update to a 4-8 digit PIN.
   - `POST /api/production/factory-reset` — executes all 10 steps.
 
+### 2026-02-17 FINAL Production ZIP delivered
+- `/app/dist/BalajiConventFeeSoftware_v1.0_FINAL.zip` — **14.16 MB, 192 files across 13 top-level folders** (01-install-main-server, 02-install-client-pc, 03-source-code, 04-database, 05-services, 06-excel-templates, 07-user-manuals, 08-lan-installation, 09-printer-setup, 10-backup-restore, 11-optional-services, 12-default-admin, docs).
+- Published to `/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip` for in-app admin download.
+- `03-source-code/` is refreshed on every build (161+ files: backend, frontend/src, frontend/public, scripts/, .env.templates, version.json).
+- `docs/` includes `CHANGELOG.md`, `API_DOCUMENTATION.md`, `DATABASE_DOCUMENTATION.md`. `START_HERE.md`, `RELEASE_NOTES.md`, `LICENSE_AND_OWNERSHIP.md`, `FINAL_VERIFICATION.md`, `LOAD_TEST_REPORT.md` at ZIP root.
+- Rebuild anytime via Delivery Center → "Rebuild the production ZIP now" (Admin PIN).
+- **Download URL** (both localhost and preview): `/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip`
+
 ## Remaining Production-Release Work (roadmap for next session)
 - P0: **Full E2E QA sweep** (testing agent across every module — Login, Dashboard, Students, Fee Collection, Every Receipt Type, Debit Voucher, Adjustments, Extensions, Bus, Reports, Verification, Parent Portal, Backup/Restore, Config Export/Import, Snapshots, Software Updates, Diagnostics, Delivery Center, Audit Logs, Global Search).
 - P0: **Debit Voucher deep enhancement** — approval workflow (threshold-based, default ₹10 000, admin-editable), person-wise ledger, dedicated DV Reports page, print_count/printed_by tracking, cheque/DD/UPI fields.
