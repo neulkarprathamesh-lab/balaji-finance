@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { School, Loader2 } from 'lucide-react';
 
 export default function Login() {
-  const [email, setEmail] = useState('neulkarprathamesh@gmail.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
@@ -72,12 +72,6 @@ export default function Login() {
           >
             {loading && <Loader2 className="w-4 h-4 animate-spin" />} Sign in
           </button>
-          <div className="text-xs text-slate-500 border-t border-slate-200 pt-4">
-            <div className="font-medium text-slate-700 mb-1">Demo accounts</div>
-            <div>cashier@balajiconvent.in / cashier123</div>
-            <div>accountant@balajiconvent.in / account123</div>
-            <div>manager@balajiconvent.in / manager123</div>
-          </div>
         </form>
       </div>
     </div>
