@@ -43,6 +43,7 @@ import ImportsHistory from '@/pages/ImportsHistory';
 import Diagnostics from '@/pages/Diagnostics';
 import DeliveryCenter from '@/pages/DeliveryCenter';
 import ConfigSnapshots from '@/pages/ConfigSnapshots';
+import SoftwareUpdates from '@/pages/SoftwareUpdates';
 import LockScreen from '@/components/LockScreen';
 import '@/index.css';
 
@@ -96,6 +97,7 @@ export default function App() {
             <Route path="admin" element={<Protected roles={['administrator']}><Admin /></Protected>} />
             <Route path="delivery-center" element={<Protected roles={['administrator']}><DeliveryCenter /></Protected>} />
             <Route path="config-snapshots" element={<Protected roles={['administrator','manager']}><ConfigSnapshots /></Protected>} />
+            <Route path="software-updates" element={<Protected roles={['administrator','manager']}><SoftwareUpdates /></Protected>} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="dashboard" element={<Navigate to="/" replace />} />
           </Route>

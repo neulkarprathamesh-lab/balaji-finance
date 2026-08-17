@@ -18,7 +18,11 @@ const FIELD_LABELS = { admission_no:'Admission No', roll_no:'Roll No', parent_na
 const empty = {
   code:'', name:'', department_name:'', category:'school', description:'', icon:'GraduationCap',
   display_order:100, enabled:true, tabs:['school','installment','misc'],
-  paper_size:'A4', orientation:'portrait', header_text:'', footer_text:'', watermark_text:'', watermark_enabled:false,
+  paper_size:'A5', orientation:'portrait',
+  theme:'bw', signature_layout:'row',
+  signatures_config: { receiver:true, accountant:true, principal:true, director:true },
+  margins_mm: { top:8, right:8, bottom:8, left:8 },
+  header_text:'', footer_text:'', watermark_text:'', watermark_enabled:false,
   barcode_enabled:false, qr_enabled:true, signature_area_enabled:true, computer_generated_note:'This is a computer-generated receipt.',
   starting_number:1, auto_reset_yearly:true,
   fields: FIELD_KEYS.reduce((a,k)=>({...a,[k]: ['roll_no','division','session','authorized_by'].includes(k) ? false : true}), {}),

@@ -146,12 +146,22 @@ async def update_user(uid: str, body: Dict[str, Any], user = Depends(require_rol
 # ---------- Version ----------
 @router.get("/version")
 async def app_version():
+    """Live app version — reads /app/version.json each call so a .bcupdate install
+    is reflected immediately without a code restart being required by callers."""
+    import json as _json
+    from pathlib import Path
+    vf = Path("/app/version.json")
+    v = {}
+    if vf.exists():
+        try: v = _json.loads(vf.read_text())
+        except Exception: v = {}
     return {
-        "app_version": "1.0.0",
-        "database_version": "1",
-        "receipt_template_version": "1.0",
-        "app_template_version": "1.0",
-        "build_date": "2026-02-04",
+        "version": v.get("version", "1.0.0"),
+        "app_version": v.get("version", "1.0.0"),
+        "database_version": v.get("database_version", "1"),
+        "receipt_template_version": v.get("receipt_template_version", "1.0"),
+        "app_template_version": v.get("app_template_version", "1.0"),
+        "build_date": v.get("build_date", "2026-02-04"),
         "developer": "Emergent Labs",
         "server_time": now_iso(),
     }

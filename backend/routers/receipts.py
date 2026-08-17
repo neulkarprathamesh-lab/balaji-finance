@@ -48,7 +48,7 @@ async def update_receipt_type(rtid: str, body: Dict[str, Any], user = Depends(re
     existing = await db.receipt_types.find_one({"id": rtid})
     if not existing: raise HTTPException(404, "Not found")
     allowed = {"name","department_name","department_id","category","description","icon","display_order","enabled","tabs","default_payment_modes","print_template","report_category","notes","archived",
-               "paper_size","orientation","header_text","footer_text","watermark_text","watermark_enabled","barcode_enabled","qr_enabled","signature_area_enabled","computer_generated_note",
+               "paper_size","orientation","theme","signature_layout","signatures_config","margins_mm","header_text","footer_text","watermark_text","watermark_enabled","barcode_enabled","qr_enabled","signature_area_enabled","computer_generated_note",
                "starting_number","current_number","auto_reset_yearly","fields"}
     upd = {k: v for k, v in body.items() if k in allowed}
     if "code" in body and body["code"]:

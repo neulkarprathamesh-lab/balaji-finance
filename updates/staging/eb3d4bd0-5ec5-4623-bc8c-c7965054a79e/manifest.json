@@ -1,0 +1,13 @@
+{
+  "build_date": "2026-02-15",
+  "database_version": null,
+  "files": {
+    "static/test_updates/hello.txt": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "migrations": [],
+  "min_supported_version": "0.0.0",
+  "release_notes": "pytest build v1.0.3",
+  "requires_backend_restart": false,
+  "requires_frontend_reload": false,
+  "version": "1.0.3"
+}

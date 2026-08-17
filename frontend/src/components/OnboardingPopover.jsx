@@ -46,7 +46,7 @@ export default function OnboardingPopover({ user }) {
               <Sparkles className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-lg font-semibold leading-tight">Welcome to Balaji Convent Fee Software</div>
+              <div className="text-[11px] tracking-widest uppercase text-slate-500 leading-tight">Fee Software · v1.0</div>
               <div className="text-[13px] text-blue-100 mt-0.5">Let's get your school ready in about 5 minutes.</div>
             </div>
           </div>

@@ -276,8 +276,12 @@ class ReceiptTypeIn(BaseModel):
     print_template: str = "a4-navy"
     report_category: Optional[str] = None
     notes: Optional[str] = None
-    paper_size: Literal["A4","A5","Thermal80"] = "A4"
+    paper_size: Literal["A4","A5","A5_LANDSCAPE","A4_LANDSCAPE","LEGAL","LETTER","Thermal80","THERMAL80"] = "A5"
     orientation: Literal["portrait","landscape"] = "portrait"
+    theme: Literal["bw","color"] = "bw"
+    signature_layout: Literal["row","grid"] = "row"
+    signatures_config: Dict[str, bool] = {"receiver": True, "accountant": True, "principal": True, "director": True}
+    margins_mm: Dict[str, int] = {"top": 8, "right": 8, "bottom": 8, "left": 8}
     header_text: Optional[str] = None
     footer_text: Optional[str] = None
     watermark_text: Optional[str] = None
@@ -424,7 +428,7 @@ async def next_voucher_number(academic_year: str) -> str:
         {"key": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
     )
     seq = doc.get("seq", 1) if doc else 1
-    return f"V-{academic_year.split('-')[0]}-{seq:06d}"
+    return f"DV-{academic_year.split('-')[0]}-{seq:06d}"
 
 def amount_in_words_inr(n: float) -> str:
     n = int(round(n))

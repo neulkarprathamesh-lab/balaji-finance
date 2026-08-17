@@ -23,6 +23,37 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-17 Additions — Session log
+- **Rebranding to "Balaji FeeHub"**: manifest.json (short_name/name/description), index.html title/meta, Login.js (new hero: Balaji FeeHub / Fee Management System / Version 1.0 + full school identity block), Layout.js sidebar branding. All still show the new circular school logo.
+- **Password visibility toggle** on the login screen (Eye / EyeOff lucide icons, `data-testid="login-password-toggle"`).
+- **Offline-LAN Software Update System** — full feature complete + 9/9 pytest passing. Files: `/app/backend/routers/updates.py`, `/app/scripts/build_bcupdate.py`, `/app/frontend/src/pages/SoftwareUpdates.js`, `/app/backend/tests/test_updates.py`.
+- **Universal Receipt Template Engine** — new `/app/frontend/src/components/receipt/` with PaperSizes, ReceiptFrame, ReceiptPrimitives, ReceiptToolbar, receiptExporter (jsPDF + html2canvas + SVG + Email PDF), ReceiptEngine + 4 template bodies (Fee, DebitVoucher, Money, Bus). Two themes (Classic B/W default, Balaji Colored). Default paper A5 portrait. Refactored `ReceiptView.js`.
+- **Logo replaced** everywhere (single file overwrite: `/app/frontend/public/school-logo.jpeg`). All 15+ pages reference this path.
+- **Voucher numbering**: `V-YYYY-NNNNNN` → `DV-YYYY-NNNNNN`.
+- **Dependencies added**: `jspdf@4.2.1`, `html2canvas@1.4.1`.
+
+### 2026-02-17 Testing Outcome
+- **Backend**: 17/17 pytest pass (9 test_updates.py + 8 test_iter6_session.py). No critical or minor issues.
+- **Frontend**: All required data-testids present. Full E2E Playwright flow through Login → sidebar → Software Updates → Receipt View → paper-size switch (A5→A4 changed frame width 559→793px) → PNG download → More menu → New Receipt page. Zero console errors.
+- **DV voucher numbering** verified live: DV-2027-000023 produced this session.
+- **Public key fingerprint** shown as 99d275…c02b on the Software Updates page.
+- Retest needed: **false**. Main agent can self-test.
+
+### Notes for next session (from testing agent)
+- Route is `/new-receipt` (not `/receipts/new`).
+- Consider `--reload-exclude tests/*` on the backend supervisor command to avoid uvicorn --reload storms during pytest writes.
+- Consider validating at least one signature slot is true on receipt-type saves.
+
+## Remaining Production-Release Work (roadmap for next session)
+- P0: **Full E2E QA sweep** (testing agent across every module — Login, Dashboard, Students, Fee Collection, Every Receipt Type, Debit Voucher, Adjustments, Extensions, Bus, Reports, Verification, Parent Portal, Backup/Restore, Config Export/Import, Snapshots, Software Updates, Diagnostics, Delivery Center, Audit Logs, Global Search).
+- P0: **Debit Voucher deep enhancement** — approval workflow (threshold-based, default ₹10 000, admin-editable), person-wise ledger, dedicated DV Reports page, print_count/printed_by tracking, cheque/DD/UPI fields.
+- P0: **Production data purge** — remove all demo/test students, receipts, vouchers, adjustments, reminders, audit entries; keep master (departments, classes, fee heads, receipt types, bus stops, system settings).
+- P0: **Global Search unified** — return students + receipts + vouchers in one panel; make "Paid To" a searchable entity.
+- P1: **Final production ZIP rebuild** at `/app/dist/BalajiFeeHub-v1.0-FINAL.zip` with new branding + engine + software update system + all installers/utilities.
+- P1: **Installation Manual PDF** — 10 sections (Requirements → Main Server install → Client PC install → First-time config → Excel import → Daily ops → Software updates → Backup/recovery → Troubleshooting → Appendix), auto-generated with jsPDF from the codebase.
+
+## Version
+- `/app/version.json` — v1.0.0 (2026-02-04)
 ### Backend
 - JWT auth with cookie + bearer fallback; brute-force safe (per-request cost)
 - Roles: cashier / accountant / manager / administrator

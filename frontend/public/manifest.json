@@ -1,7 +1,7 @@
 {
-  "short_name": "Balaji Fee",
-  "name": "Balaji Convent Fee Software",
-  "description": "Fee & receipt management for Balaji Convent & Junior College",
+  "short_name": "Balaji FeeHub",
+  "name": "Balaji FeeHub — Balaji Convent & Junior College",
+  "description": "Fee Management System · Balaji Convent & Junior College, Butibori, Nagpur",
   "icons": [
     { "src": "/school-logo.jpeg", "sizes": "192x192", "type": "image/jpeg", "purpose": "any" },
     { "src": "/school-logo.jpeg", "sizes": "512x512", "type": "image/jpeg", "purpose": "any" }
