@@ -1,0 +1,13 @@
+{
+  "build_date": "2026-02-15",
+  "database_version": null,
+  "files": {
+    "etc/passwd": "34976ee5d6a9400c329bc1c531140439f2a4340ac89bbe6b2337c3c456991bcb"
+  },
+  "migrations": [],
+  "min_supported_version": "0.0.0",
+  "release_notes": "pytest build v1.0.6",
+  "requires_backend_restart": false,
+  "requires_frontend_reload": false,
+  "version": "1.0.6"
+}

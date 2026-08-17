@@ -4,8 +4,10 @@ import { PageHeader } from '@/components/Layout';
 import { toast } from 'sonner';
 import {
   Download, Package, Server, Database, Settings2, Receipt, BookOpen,
-  History, ShieldCheck, RefreshCw, ExternalLink, FileText, CheckCircle2
+  History, ShieldCheck, RefreshCw, ExternalLink, FileText, CheckCircle2,
+  Trash2, AlertTriangle, FileDown, Loader2,
 } from 'lucide-react';
+import { downloadInstallationManual } from '@/lib/installationManual';
 
 const ICONS = {
   package: Package, server: Server, database: Database, settings: Settings2,
@@ -44,10 +46,62 @@ async function downloadWithPin(endpoint, filename, pin) {
 export default function DeliveryCenter() {
   const [manifest, setManifest] = useState(null);
   const [busy, setBusy] = useState(null);
+  const [purgePreview, setPurgePreview] = useState(null);
+  const [genBusy, setGenBusy] = useState(false);
   const { ask } = useAdminPin();
 
   const load = () => api.get('/deliverables/manifest').then(r => setManifest(r.data));
   useEffect(() => { load(); }, []);
+
+  const loadPurgePreview = async () => {
+    const pin = ask(); if (!pin) return;
+    try {
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/production/purge/preview`, {
+        credentials: 'include',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('bc_token') || ''}`,
+          'X-Admin-Pin': pin,
+        },
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setPurgePreview(await r.json());
+    } catch (e) { toast.error(String(e.message || e)); }
+  };
+
+  const doPurge = async () => {
+    const phrase = window.prompt('This will PERMANENTLY delete every transactional row (students, receipts, vouchers, audit log, snapshots, updates). Master data is preserved.\n\nType exactly:  PURGE DEMO DATA');
+    if (phrase !== 'PURGE DEMO DATA') { toast.error('Cancelled — phrase did not match.'); return; }
+    const pin = ask(); if (!pin) return;
+    setBusy('purge');
+    try {
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/production/purge`, {
+        method: 'POST', credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('bc_token') || ''}`,
+          'X-Admin-Pin': pin,
+        },
+        body: JSON.stringify({ confirm_phrase: phrase, also_clear_backup_files: false, also_clear_staged_updates: true }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      const total = Object.values(data.collections_deleted || {}).reduce((a,b) => a + (typeof b === 'number' ? b : 0), 0);
+      toast.success(`Purge complete — ${total} transactional row(s) deleted, master data preserved.`);
+      setPurgePreview(null);
+      load();
+    } catch (e) { toast.error(String(e.message || e)); }
+    setBusy(null);
+  };
+
+  const generateManual = async () => {
+    setGenBusy(true);
+    try {
+      const v = manifest?.app_version || '1.0.0';
+      await downloadInstallationManual({ appVersion: v, buildDate: new Date().toISOString().slice(0,10) });
+      toast.success('Installation manual downloaded.');
+    } catch (e) { toast.error(`Manual generation failed — ${e.message || e}`); }
+    setGenBusy(false);
+  };
 
   const doDownload = async (item) => {
     setBusy(item.label);
@@ -91,13 +145,87 @@ export default function DeliveryCenter() {
         <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200 flex items-start gap-3">
           <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
           <div>
-            <div className="font-heading font-semibold text-emerald-900">Version 1.0 is production-ready</div>
+            <div className="font-heading font-semibold text-emerald-900">Balaji FeeHub v{manifest.app_version} — production-ready</div>
             <div className="text-[13px] text-emerald-800 mt-0.5">
-              This is the day-to-day download hub for the school — configuration exports, the latest database backup, and the ownership documents.
-              The <strong>complete source-code ZIP is delivered separately</strong> for you to store safely on the Main Server + an external drive; it is intentionally not exposed inside the running app.
+              This is the day-to-day download hub for the school — configuration exports, the latest database backup, the ownership documents,
+              and the full illustrated Installation Manual (PDF). Use "Purge Demo Data" to reset to a fresh-install database before shipping the final ZIP.
             </div>
           </div>
         </div>
+
+        {/* Installation Manual + Purge Demo Data — headline actions */}
+        <section className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-4" data-testid="dc-install-manual">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg bg-slate-900 text-white flex items-center justify-center flex-shrink-0"><BookOpen className="w-5 h-5" /></div>
+              <div className="flex-1">
+                <div className="font-heading font-semibold text-slate-900">Installation Manual (PDF)</div>
+                <p className="text-[13px] text-slate-600 mt-0.5">10 illustrated sections — System requirements, Main Server install, Client PCs, First-time config, Excel import, Daily ops, Software updates, Backup/recovery, Troubleshooting, Appendix. Auto-generated with the current version so it always matches the running software.</p>
+                <button
+                  onClick={generateManual} disabled={genBusy}
+                  data-testid="dc-generate-manual"
+                  className="mt-3 h-9 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-sm font-semibold inline-flex items-center gap-1.5"
+                >
+                  {genBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} {genBusy ? 'Generating…' : 'Generate & Download Manual'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white border border-amber-200 rounded-xl p-4" data-testid="dc-purge-card">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-500 text-white flex items-center justify-center flex-shrink-0"><Trash2 className="w-5 h-5" /></div>
+              <div className="flex-1">
+                <div className="font-heading font-semibold text-slate-900">Purge Demo Data (fresh install)</div>
+                <p className="text-[13px] text-slate-600 mt-0.5">
+                  Delete every transactional row (students, receipts, vouchers, adjustments, audit log, snapshots, updates) and reset all counters.
+                  Master data (departments, classes, fee heads, receipt types, users, settings) is preserved. Requires Admin PIN + the exact phrase <code className="font-mono text-[11px] bg-slate-100 px-1 py-0.5 rounded">PURGE DEMO DATA</code>.
+                </p>
+                <div className="mt-3 flex gap-2 flex-wrap">
+                  <button onClick={loadPurgePreview} data-testid="dc-purge-preview" className="h-9 px-3 border border-slate-300 rounded text-sm hover:bg-slate-50 inline-flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600" /> Preview what will be deleted
+                  </button>
+                  <button
+                    onClick={doPurge} disabled={busy === 'purge'}
+                    data-testid="dc-purge-execute"
+                    className="h-9 px-3 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-sm font-semibold inline-flex items-center gap-1.5"
+                  >
+                    {busy === 'purge' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} {busy === 'purge' ? 'Purging…' : 'Purge Demo Data'}
+                  </button>
+                </div>
+                {purgePreview && (
+                  <div className="mt-3 border border-slate-200 rounded p-3 bg-slate-50 text-[12px]" data-testid="dc-purge-preview-panel">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-widest text-red-700 font-semibold mb-1">Would delete</div>
+                        <ul className="space-y-0.5">
+                          {Object.entries(purgePreview.would_delete || {}).map(([k, v]) => (
+                            <li key={k} className="flex justify-between font-mono text-[11px]">
+                              <span className="text-slate-600">{k}</span><span className={Number(v) > 0 ? 'text-red-700 font-bold' : 'text-slate-400'}>{v}</span>
+                            </li>
+                          ))}
+                          <li className="flex justify-between font-mono text-[11px] border-t border-slate-200 mt-1 pt-1">
+                            <span className="text-slate-600">counters (reset)</span><span className="text-red-700 font-bold">{purgePreview.would_reset_counters}</span>
+                          </li>
+                        </ul>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-widest text-emerald-700 font-semibold mb-1">Would preserve</div>
+                        <ul className="space-y-0.5">
+                          {Object.entries(purgePreview.would_preserve || {}).map(([k, v]) => (
+                            <li key={k} className="flex justify-between font-mono text-[11px]">
+                              <span className="text-slate-600">{k}</span><span className="text-emerald-700 font-bold">{v}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
 
         {manifest.sections.map((section) => {
           const Icon = ICONS[section.icon] || Package;

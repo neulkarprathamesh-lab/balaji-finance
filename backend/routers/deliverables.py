@@ -37,9 +37,26 @@ async def deliverables_manifest(user = Depends(require_roles("administrator"))):
     Full source code is delivered separately as a one-shot project ZIP for offline archival."""
     backups = sorted(BACKUP_DIR.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True) if BACKUP_DIR.exists() else []
     latest_backup = backups[0] if backups else None
+    final_zip = DL_DIR / "BalajiFeeHub-v1.0-FINAL.zip"
+    from pathlib import Path as _P
+    version_file = _P("/app/version.json")
+    app_version = "1.0.0"
+    if version_file.exists():
+        try:
+            import json as _j
+            app_version = _j.loads(version_file.read_text()).get("version", "1.0.0")
+        except Exception: pass
     return {
-        "app_version": "1.0.0", "database_version": "1", "generated_at": now_iso(),
+        "app_version": app_version, "database_version": "1", "generated_at": now_iso(),
         "sections": [
+            {"title": "Production Release", "icon": "package",
+             "items": [
+                 _file_meta(final_zip, "Balaji FeeHub v1.0 — final source ZIP (installers + backend + frontend + scripts + docs)", "release"),
+                 {"label": "Rebuild the production ZIP now",
+                  "endpoint": "/api/deliverables/rebuild-zip", "method": "POST",
+                  "available": True,
+                  "note": "Runs scripts/build_final_zip.py to regenerate BalajiFeeHub-v1.0-FINAL.zip. Requires Admin PIN."},
+             ]},
             {"title": "Database Package", "icon": "database",
              "items": [
                  {"label": "Latest database backup",
@@ -70,8 +87,36 @@ async def deliverables_manifest(user = Depends(require_roles("administrator"))):
                   "endpoint": "/api/version", "method": "GET", "available": True},
                  {"label": "Diagnostics report",
                   "endpoint": "/api/diagnostics", "method": "GET", "available": True},
+                 {"label": "Software updates history",
+                  "endpoint": "/api/updates", "method": "GET", "available": True,
+                  "note": "Every .bcupdate install + rollback recorded here."},
              ]},
         ],
+    }
+
+
+@router.post("/deliverables/rebuild-zip")
+async def rebuild_zip(user = Depends(require_admin_pin)):
+    """Regenerate BalajiFeeHub-v1.0-FINAL.zip using scripts/build_final_zip.py."""
+    import subprocess, sys
+    from pathlib import Path as _P
+    script = _P("/app/scripts/build_final_zip.py")
+    if not script.exists():
+        raise HTTPException(500, "build_final_zip.py is missing.")
+    try:
+        r = subprocess.run(
+            [sys.executable, str(script)], capture_output=True, text=True, timeout=300, cwd="/app",
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(500, "ZIP build timed out after 5 minutes.")
+    if r.returncode != 0:
+        raise HTTPException(500, f"Build failed: {r.stderr[-1000:] or r.stdout[-1000:]}")
+    zip_path = DL_DIR / "BalajiFeeHub-v1.0-FINAL.zip"
+    return {
+        "ok": True,
+        "download_url": f"/downloads/{zip_path.name}",
+        "size_mb": round(zip_path.stat().st_size / 1024 / 1024, 2) if zip_path.exists() else 0,
+        "log_tail": r.stdout[-800:],
     }
 
 

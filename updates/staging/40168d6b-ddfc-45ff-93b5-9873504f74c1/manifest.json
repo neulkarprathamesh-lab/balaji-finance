@@ -1,0 +1,13 @@
+{
+  "build_date": "2026-02-15",
+  "database_version": null,
+  "files": {
+    "static/test_updates/hello.txt": "437b0c28d7c8a777b6a7b1d7d5dc977aaeb93f83dd33903ca8902574013361e4"
+  },
+  "migrations": [],
+  "min_supported_version": "99.0.0",
+  "release_notes": "pytest build v9.9.9",
+  "requires_backend_restart": false,
+  "requires_frontend_reload": false,
+  "version": "9.9.9"
+}

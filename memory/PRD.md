@@ -24,6 +24,14 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 
 ## What's Been Implemented (2026-02-04)
 ### 2026-02-17 Additions — Session log
+- **Production Data Purge System** — new router `/app/backend/routers/production.py` with `GET /api/production/purge/preview` and `POST /api/production/purge` (Admin PIN + phrase "PURGE DEMO DATA"). Wipes 11 transactional collections (students, receipts, adjustments, payment_extensions, reminders, notices, audit_log, config_snapshots, updates, backups, diagnostics_snapshots) and resets all counters; preserves 10 master collections (departments, classes, fee_heads, fee_structures, receipt_types, bus_stops, bus_routes, users, settings, config_defaults). Standalone CLI at `/app/scripts/production_purge.py` for offline use.
+- **Fresh Production ZIP builder** — `/app/scripts/build_final_zip.py` produces `/app/dist/BalajiFeeHub-v1.0-FINAL.zip` and publishes a copy to `/app/frontend/public/downloads/BalajiFeeHub-v1.0-FINAL.zip` for in-app admin download. Excludes __pycache__/node_modules/keys/backups/updates. `POST /api/deliverables/rebuild-zip` triggers a fresh rebuild on demand (Admin PIN). **Built: 4.70 MB, 156 files.**
+- **Installation Manual generator** — `/app/frontend/src/lib/installationManual.js` uses jsPDF to build a fully-illustrated 10-section PDF: System Requirements → Main Server install → Client PCs → First-time config → Excel import → Daily ops → Software updates → Backup/recovery → Troubleshooting → Appendix. Includes cover page (logo + brand), table of contents with correct page numbers, per-page header/footer, section styling. "Generate & Download Manual" button on Delivery Center.
+- **Delivery Center redesigned** — new headline row with Installation Manual card + Purge Demo Data card (with preview panel showing exact row counts per collection). New "Production Release" manifest section links to the freshly-built ZIP + rebuild endpoint. New "Software updates history" line in Version & Audit.
+- **Rebranding to "Balaji FeeHub"** (from earlier this session): manifest.json, index.html, Login (new hero + password eye toggle), Layout sidebar.
+- **Offline-LAN Software Update System** + **Universal Receipt Template Engine** + **Logo replaced everywhere** + **DV-YYYY-NNNNNN voucher numbering** (from earlier this session). See prior entries below.
+
+### 2026-02-17 Additions
 - **Rebranding to "Balaji FeeHub"**: manifest.json (short_name/name/description), index.html title/meta, Login.js (new hero: Balaji FeeHub / Fee Management System / Version 1.0 + full school identity block), Layout.js sidebar branding. All still show the new circular school logo.
 - **Password visibility toggle** on the login screen (Eye / EyeOff lucide icons, `data-testid="login-password-toggle"`).
 - **Offline-LAN Software Update System** — full feature complete + 9/9 pytest passing. Files: `/app/backend/routers/updates.py`, `/app/scripts/build_bcupdate.py`, `/app/frontend/src/pages/SoftwareUpdates.js`, `/app/backend/tests/test_updates.py`.
@@ -43,6 +51,12 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Route is `/new-receipt` (not `/receipts/new`).
 - Consider `--reload-exclude tests/*` on the backend supervisor command to avoid uvicorn --reload storms during pytest writes.
 - Consider validating at least one signature slot is true on receipt-type saves.
+
+### 2026-02-17 Testing Outcome (iteration_7)
+- **Backend**: 12/12 pytest pass (`test_iter7_delivery_purge.py`) + prior 17/17 still green — 29 total tests. No critical/minor issues.
+- **Frontend**: All required data-testids present. Purge preview UI flow works with PIN gating. jsPDF Installation Manual download triggers with filename `BalajiFeeHub-Installation-Manual-v1.0.0.pdf`. Zero console errors.
+- **Purge execute path** intentionally NOT invoked to preserve seeded data. Wrong-phrase attempt verified idempotent.
+- **Retest needed**: false. **Main agent self-test**: not needed.
 
 ## Remaining Production-Release Work (roadmap for next session)
 - P0: **Full E2E QA sweep** (testing agent across every module — Login, Dashboard, Students, Fee Collection, Every Receipt Type, Debit Voucher, Adjustments, Extensions, Bus, Reports, Verification, Parent Portal, Backup/Restore, Config Export/Import, Snapshots, Software Updates, Diagnostics, Delivery Center, Audit Logs, Global Search).
