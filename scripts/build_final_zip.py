@@ -63,8 +63,16 @@ def should_skip(p: Path) -> bool:
 
 
 def _refresh_source_snapshot() -> None:
-    """Copy the CURRENT /app/backend + /app/frontend/{src,public} into 03-source-code/
-    so the ZIP always reflects the latest code on disk."""
+    """Copy the CURRENT /app/backend + /app/frontend/{src,public,build} into 03-source-code/
+    so the ZIP always reflects the latest code + prebuilt frontend on disk."""
+    # We keep the prebuilt frontend/build/ that was placed there separately.
+    keep_build = SRC_DIR / "frontend" / "build"
+    keep_build_tmp = None
+    if keep_build.exists():
+        import tempfile
+        keep_build_tmp = Path(tempfile.mkdtemp(prefix="_build_keep_"))
+        shutil.copytree(keep_build, keep_build_tmp / "build", dirs_exist_ok=True)
+
     if SRC_DIR.exists():
         shutil.rmtree(SRC_DIR, ignore_errors=True)
     SRC_DIR.mkdir(parents=True, exist_ok=True)
@@ -91,6 +99,9 @@ def _refresh_source_snapshot() -> None:
     (SRC_DIR / "frontend").mkdir(parents=True, exist_ok=True)
     copy_tree(APP / "frontend" / "src",    SRC_DIR / "frontend" / "src")
     copy_tree(APP / "frontend" / "public", SRC_DIR / "frontend" / "public")
+    # NEVER ship the "downloads" folder (used at runtime to publish ZIPs) — else the ZIP contains itself.
+    dl = SRC_DIR / "frontend" / "public" / "downloads"
+    if dl.exists(): shutil.rmtree(dl, ignore_errors=True)
     for f in ("package.json", "postcss.config.js", "tailwind.config.js",
               "jsconfig.json", "craco.config.js"):
         s = APP / "frontend" / f
@@ -99,6 +110,20 @@ def _refresh_source_snapshot() -> None:
     (SRC_DIR / "frontend" / ".env.template").write_text(
         "REACT_APP_BACKEND_URL=http://<MAIN-SERVER-IP>:8001\nWDS_SOCKET_PORT=443\n"
     )
+
+    # Bundle the prebuilt frontend/build/ so the Main Server needs NO Node/npm.
+    live_build = APP / "frontend" / "build"
+    if live_build.exists():
+        copy_tree(live_build, SRC_DIR / "frontend" / "build")
+        # Strip source maps and any accidentally-placed downloads folder.
+        for m in (SRC_DIR / "frontend" / "build").rglob("*.map"):
+            m.unlink(missing_ok=True)
+        bd = SRC_DIR / "frontend" / "build" / "downloads"
+        if bd.exists(): shutil.rmtree(bd, ignore_errors=True)
+    elif keep_build_tmp and (keep_build_tmp / "build").exists():
+        shutil.copytree(keep_build_tmp / "build", SRC_DIR / "frontend" / "build", dirs_exist_ok=True)
+    if keep_build_tmp:
+        shutil.rmtree(keep_build_tmp, ignore_errors=True)
 
     # bundle the scripts
     scripts_dst = SRC_DIR / "scripts"

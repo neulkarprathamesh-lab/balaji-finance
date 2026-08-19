@@ -94,3 +94,6 @@ credentials.json
 .credentials
 frontend/node_modules/.cache/default-development/7.pack
 frontend/node_modules/.cache/default-development/0.pack
+frontend/public/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip
+dist/BalajiConventFeeSoftware_v1.0_FINAL.zip
+dist/BalajiConventFeeSoftware-v1.0/05-services/mongodb-windows-x86_64.msi

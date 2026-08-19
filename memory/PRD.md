@@ -84,7 +84,13 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Rebuild anytime via Delivery Center → "Rebuild the production ZIP now" (Admin PIN).
 - **Download URL** (both localhost and preview): `/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip`
 
-### 2026-02-19 Windows-Grade Installer Overhaul
+### 2026-02-19 Truly Self-Contained FINAL Package
+- **Bundled inside the ZIP**: MongoDB Community Windows MSI (597 MB) in `05-services/`, NSSM 2.24 (`05-services/nssm.exe`), 48 Windows-specific Python wheels for offline `pip install --no-index --find-links wheels/`, prebuilt React static site in `03-source-code/frontend/build/` — no Node/npm required at install time.
+- **`install-main-server.bat` — 14 stages** — silent MongoDB MSI install → venv → OFFLINE pip install from bundled wheels → secure JWT → LAN IP detection → firewall (only 3000+8001) → services registered via bundled NSSM (Mongo→Backend→Frontend dependency chain, all AUTO-start) → HTTP-200 post-install health checks → desktop shortcut.
+- **`preflight.bat` — every check now labelled** `[REQUIRED]` (blocks install), `[AUTO-INSTALLED]` (bundled), `[OPTIONAL]` (nice-to-have). BLOCK counter and readable status per row.
+- **INSTALLATION_MANUAL.pdf** — 13-section illustrated PDF generated via ReportLab (cover page, per-page header/footer, page numbers). Includes explicit "Not yet tested on clean Windows PC" transparency section.
+- **SHA256SUM.txt** — bundled at the ZIP root AND published next to the download.
+- **Package audit script** verifies every required file is present in the ZIP; no recursive self-inclusion. All checks pass.
 - **Preflight (`preflight.bat`)**: 17 non-destructive checks — Administrator, 64-bit, Windows 10/11 build, 5 GB disk, Python found, Python >=3.11, pip, MongoDB, port 27017/8001/3000 availability, LAN IP detection, Firewall service, curl, PowerShell 5+, NSSM bundled, node informational. Exits non-zero on any fail with the exact remediation.
 - **Main installer (`install-main-server.bat`)**: 12 numbered stages — creates `C:\balaji-fee` tree, copies source, creates venv, `pip install` from the cleaned requirements.txt, generates secure JWT via PowerShell, auto-detects LAN IP, writes `backend/.env` + `frontend/.env`, writes `mongod.cfg` (bindIp 127.0.0.1 only — MongoDB never exposed to LAN), opens firewall for 3000+8001 only, registers 3 Windows services (Mongo → Backend → Frontend, in dependency order), starts them, runs post-install HTTP 200 checks, creates desktop shortcut. Reports INSTALLATION SUCCESSFUL / FAILED with the exact reason.
 - **Service registration (`register-services.bat`)**: NSSM-first (log rotation, auto-restart, dependency chains); sc.exe fallback if NSSM not bundled. Frontend uses Python's built-in `http.server` — **no Node dependency on the Main Server**.
