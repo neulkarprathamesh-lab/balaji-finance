@@ -39,7 +39,7 @@ DIST_ROOT   = APP / "dist" / "BalajiConventFeeSoftware-v1.0"      # pre-authored
 SRC_DIR     = DIST_ROOT / "03-source-code"                        # will be refreshed each build
 OUT_ZIP     = APP / "dist" / "BalajiConventFeeSoftware_v1.0_FINAL.zip"
 
-EXCLUDE_DIRS  = {"__pycache__", "node_modules", ".pytest_cache", "build",
+EXCLUDE_DIRS  = {"__pycache__", "node_modules", ".pytest_cache",
                  ".git", ".emergent", ".cache", ".yarn", "coverage"}
 EXCLUDE_FILES = {".DS_Store", "update_private.pem"}
 SENSITIVE_FILES = {"update_private.pem"}   # never ship
@@ -112,16 +112,18 @@ def _refresh_source_snapshot() -> None:
     )
 
     # Bundle the prebuilt frontend/build/ so the Main Server needs NO Node/npm.
+    # NOTE: `build` is in EXCLUDE_DIRS to keep source packaging clean; we bypass it here
+    # by using shutil.copytree directly against the live build directory.
     live_build = APP / "frontend" / "build"
+    dest_build = SRC_DIR / "frontend" / "build"
     if live_build.exists():
-        copy_tree(live_build, SRC_DIR / "frontend" / "build")
-        # Strip source maps and any accidentally-placed downloads folder.
-        for m in (SRC_DIR / "frontend" / "build").rglob("*.map"):
+        shutil.copytree(live_build, dest_build, dirs_exist_ok=True)
+        for m in dest_build.rglob("*.map"):
             m.unlink(missing_ok=True)
-        bd = SRC_DIR / "frontend" / "build" / "downloads"
+        bd = dest_build / "downloads"
         if bd.exists(): shutil.rmtree(bd, ignore_errors=True)
     elif keep_build_tmp and (keep_build_tmp / "build").exists():
-        shutil.copytree(keep_build_tmp / "build", SRC_DIR / "frontend" / "build", dirs_exist_ok=True)
+        shutil.copytree(keep_build_tmp / "build", dest_build, dirs_exist_ok=True)
     if keep_build_tmp:
         shutil.rmtree(keep_build_tmp, ignore_errors=True)
 
@@ -330,10 +332,19 @@ See `LICENSE_AND_OWNERSHIP.md` for full terms.
     dl_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(OUT_ZIP, dl_dir / OUT_ZIP.name)
 
+    # Compute SHA-256 and write SHA256SUM.txt next to the ZIP + into the delivery folder
+    # (the latter will be picked up the next build).
+    import hashlib
+    h = hashlib.sha256(OUT_ZIP.read_bytes()).hexdigest()
+    (APP / "dist" / "SHA256SUM.txt").write_text(f"{h}  {OUT_ZIP.name}\n")
+    (dl_dir / "SHA256SUM.txt").write_text(f"{h}  {OUT_ZIP.name}\n")
+    (DIST_ROOT / "SHA256SUM.txt").write_text(f"{h}  {OUT_ZIP.name}\n")
+
     # Version.json for the in-app updater
-    (dl_dir / "version.json").write_text(f'{{"version":"1.0.0","filename":"{OUT_ZIP.name}","size_mb":{size_mb:.2f},"built_at":"{datetime.utcnow().isoformat()}Z"}}')
+    (dl_dir / "version.json").write_text(f'{{"version":"1.0.0","filename":"{OUT_ZIP.name}","size_mb":{size_mb:.2f},"sha256":"{h}","built_at":"{datetime.utcnow().isoformat()}Z"}}')
 
     print(f"Published → /downloads/{OUT_ZIP.name}  (accessible via the running app)")
+    print(f"SHA-256   : {h}")
     return 0
 
 
