@@ -1,0 +1,108 @@
+name: Build Balaji FeeHub Windows Installers
+
+on:
+  push:
+    paths:
+      - '.github/workflows/build-installers.yml'
+      - 'dist/installer-sources/**'
+      - 'backend/**'
+      - 'frontend/**'
+      - 'scripts/**'
+      - 'version.json'
+  workflow_dispatch:      # lets you click "Run workflow" from the Actions tab any time
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup -y --no-progress
+
+      - name: Download prebuilt payload from Emergent preview
+        shell: pwsh
+        run: |
+          $base = "https://finance-hub-school.preview.emergentagent.com/downloads"
+          New-Item -ItemType Directory -Force -Path work | Out-Null
+          foreach ($f in @(
+            "BalajiConventFeeSoftware_v1.0_CORE.zip",
+            "mongodb-windows-x86_64.msi.001",
+            "mongodb-windows-x86_64.msi.002"
+          )) {
+            Write-Host "Downloading $f ..."
+            Invoke-WebRequest "$base/$f" -OutFile "work\$f"
+          }
+
+      - name: Verify SHA-256 checksums
+        shell: pwsh
+        run: |
+          $lines = (Invoke-WebRequest "https://finance-hub-school.preview.emergentagent.com/downloads/SHA256SUM.txt").Content -split "`n"
+          foreach ($line in $lines) {
+            if ($line -match "^([0-9a-f]{64})\s+(.+)$") {
+              $expected = $Matches[1].ToLower()
+              $file     = $Matches[2].Trim()
+              $path     = "work\$file"
+              if (Test-Path $path) {
+                $got = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
+                if ($got -ne $expected) { throw "SHA-256 mismatch on $file" }
+                Write-Host "OK  $file"
+              }
+            }
+          }
+
+      - name: Extract CORE zip
+        shell: pwsh
+        run: |
+          Expand-Archive -Force "work\BalajiConventFeeSoftware_v1.0_CORE.zip" -DestinationPath "work\dist\BalajiConventFeeSoftware-v1.0"
+
+      - name: Recombine MongoDB MSI parts inside 05-services
+        shell: cmd
+        run: |
+          set SVC=work\dist\BalajiConventFeeSoftware-v1.0\05-services
+          copy /y work\mongodb-windows-x86_64.msi.001 "%SVC%\mongodb-windows-x86_64.msi.001"
+          copy /y work\mongodb-windows-x86_64.msi.002 "%SVC%\mongodb-windows-x86_64.msi.002"
+          copy /b "%SVC%\mongodb-windows-x86_64.msi.001" + "%SVC%\mongodb-windows-x86_64.msi.002" "%SVC%\mongodb-windows-x86_64.msi"
+          del "%SVC%\mongodb-windows-x86_64.msi.001" "%SVC%\mongodb-windows-x86_64.msi.002"
+
+      - name: Compile Server installer
+        shell: cmd
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" dist\installer-sources\BalajiFeeHub-Server-Setup.iss'
+
+      - name: Compile Client installer
+        shell: cmd
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" dist\installer-sources\BalajiFeeHub-Client-Setup.iss'
+
+      - name: Compute SHA-256 checksums for both EXEs
+        shell: pwsh
+        run: |
+          $out = "dist\installer-sources\Output"
+          $sums = foreach ($e in "BalajiFeeHub-Server-Setup.exe","BalajiFeeHub-Client-Setup.exe") {
+            $p = Join-Path $out $e
+            $h = (Get-FileHash $p -Algorithm SHA256).Hash.ToLower()
+            $s = (Get-Item $p).Length
+            "{0}  {1}    ({2:N0} bytes)" -f $h,$e,$s
+          }
+          $sums -join "`n" | Set-Content (Join-Path $out "SHA256SUMS.txt")
+          Get-Content (Join-Path $out "SHA256SUMS.txt")
+
+      - name: Upload installers as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BalajiFeeHub-Installers
+          path: |
+            dist/installer-sources/Output/BalajiFeeHub-Server-Setup.exe
+            dist/installer-sources/Output/BalajiFeeHub-Client-Setup.exe
+            dist/installer-sources/Output/SHA256SUMS.txt
+          retention-days: 90
+
+      - name: Also publish to a GitHub Release (only on tag pushes)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/installer-sources/Output/BalajiFeeHub-Server-Setup.exe
+            dist/installer-sources/Output/BalajiFeeHub-Client-Setup.exe
+            dist/installer-sources/Output/SHA256SUMS.txt
