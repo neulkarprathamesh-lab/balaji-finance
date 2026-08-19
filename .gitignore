@@ -97,3 +97,7 @@ frontend/node_modules/.cache/default-development/0.pack
 frontend/public/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip
 dist/BalajiConventFeeSoftware_v1.0_FINAL.zip
 dist/BalajiConventFeeSoftware-v1.0/05-services/mongodb-windows-x86_64.msi
+frontend/public/downloads/mongodb-windows-x86_64.msi.002
+frontend/public/downloads/mongodb-windows-x86_64.msi.001
+dist/mongodb-windows-x86_64.msi.002
+dist/mongodb-windows-x86_64.msi.001

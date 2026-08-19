@@ -106,6 +106,14 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **Verified**: `pip install --dry-run -r requirements.txt` succeeds, backend restarts clean on the new requirements, 17/17 pytest still pass.
 - **Rebuilt ZIP**: new file + new SHA-256, published to `/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip`.
 
+### 2026-02-19 Split delivery for large-file browser downloads
+- **`scripts/build_split_zip.py`** — splits the 603 MB monolith into three downloadable pieces:
+  1. `BalajiConventFeeSoftware_v1.0_CORE.zip`  — **36.91 MB · 249 files** (code, installers, wheels, docs, prebuilt frontend, NSSM). Small enough for any browser.
+  2. `mongodb-windows-x86_64.msi.001` — **300 MB** (first half of MongoDB MSI).
+  3. `mongodb-windows-x86_64.msi.002` — **269.35 MB** (second half).
+- **`install-main-server.bat`** now detects the two .001/.002 parts under `05-services/` and recombines them with Windows `copy /b .001 + .002 mongodb-windows-x86_64.msi` before running the silent install. If a full MSI is already present it is used as-is (backwards compatible).
+- **`/downloads/SPLIT_MANIFEST.json`** and **`/downloads/SHA256SUM.txt`** carry every part's SHA-256 for post-download verification.
+
 ## Remaining Production-Release Work (roadmap for next session)
 - P0: **Full E2E QA sweep** (testing agent across every module — Login, Dashboard, Students, Fee Collection, Every Receipt Type, Debit Voucher, Adjustments, Extensions, Bus, Reports, Verification, Parent Portal, Backup/Restore, Config Export/Import, Snapshots, Software Updates, Diagnostics, Delivery Center, Audit Logs, Global Search).
 - P0: **Debit Voucher deep enhancement** — approval workflow (threshold-based, default ₹10 000, admin-editable), person-wise ledger, dedicated DV Reports page, print_count/printed_by tracking, cheque/DD/UPI fields.

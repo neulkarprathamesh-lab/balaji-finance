@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "built_at": "2026-08-19T09:43:55.012814Z",
+  "parts": {
+    "BalajiConventFeeSoftware_v1.0_CORE.zip": {
+      "size_bytes": 38707848,
+      "sha256": "88b5bdf0ed81c9da6caa99007e6a1ffcb01c2335ed53cedca6faeca1887021c4"
+    },
+    "mongodb-windows-x86_64.msi.001": {
+      "size_bytes": 314572800,
+      "sha256": "ad328f2a7b1358b0033cb90cf34eacbc393cd61dffc3e8aee35f57f26ffee6c0"
+    },
+    "mongodb-windows-x86_64.msi.002": {
+      "size_bytes": 282431488,
+      "sha256": "ab982dbe51c5169a38a1f13b6c0a32c8af85fd094889d1b4ce8462de23949c53"
+    }
+  },
+  "reassembly_note": "Windows: place the two .001/.002 files in 05-services/ next to the CORE zip's installers.  install-main-server.bat will run:  copy /b .msi.001 + .msi.002 mongodb-windows-x86_64.msi  and then run the MSI silently."
+}
