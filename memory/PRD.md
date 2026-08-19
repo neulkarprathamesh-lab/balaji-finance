@@ -84,7 +84,16 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Rebuild anytime via Delivery Center → "Rebuild the production ZIP now" (Admin PIN).
 - **Download URL** (both localhost and preview): `/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip`
 
-### 2026-02-17 Install Blocker FIXED — `emergentintegrations` and other bloat deps removed
+### 2026-02-19 Windows-Grade Installer Overhaul
+- **Preflight (`preflight.bat`)**: 17 non-destructive checks — Administrator, 64-bit, Windows 10/11 build, 5 GB disk, Python found, Python >=3.11, pip, MongoDB, port 27017/8001/3000 availability, LAN IP detection, Firewall service, curl, PowerShell 5+, NSSM bundled, node informational. Exits non-zero on any fail with the exact remediation.
+- **Main installer (`install-main-server.bat`)**: 12 numbered stages — creates `C:\balaji-fee` tree, copies source, creates venv, `pip install` from the cleaned requirements.txt, generates secure JWT via PowerShell, auto-detects LAN IP, writes `backend/.env` + `frontend/.env`, writes `mongod.cfg` (bindIp 127.0.0.1 only — MongoDB never exposed to LAN), opens firewall for 3000+8001 only, registers 3 Windows services (Mongo → Backend → Frontend, in dependency order), starts them, runs post-install HTTP 200 checks, creates desktop shortcut. Reports INSTALLATION SUCCESSFUL / FAILED with the exact reason.
+- **Service registration (`register-services.bat`)**: NSSM-first (log rotation, auto-restart, dependency chains); sc.exe fallback if NSSM not bundled. Frontend uses Python's built-in `http.server` — **no Node dependency on the Main Server**.
+- **Uninstall / Repair**: `uninstall.bat` stops and removes services (keeps backups + data); `repair-installation.bat` re-copies source and re-installs deps without touching the DB.
+- **Client installer (`install-client-pc.bat`)**: 6 stages — detects Chrome/Edge, PowerShell auto-discovery of the Main Server on the LAN (10-second parallel scan of the /24), manual fallback, HTTP 200 verification, confirmation, desktop + Start Menu shortcut, auto-opens the browser. **Zero Python/Node/MongoDB required on clients.**
+- **Client `uninstall` + `repair`** provided.
+- **requirements.txt** already cleaned (2026-02-17): `emergentintegrations`, `boto3`, `python-jose`, `requests-oauthlib`, `jq`, `black`, `isort`, `flake8`, `mypy` all removed; `openpyxl` added.
+- **New FINAL ZIP**: `BalajiConventFeeSoftware_v1.0_FINAL.zip` — 42.45 MB · 196 files · SHA-256 `12b6d077d11b5be274d6549b915195a305df236e5689a17de73cf7f046baa77b`.
+- **Honest limitation**: agent runs in a Linux container. Every `.bat` was hand-written to Windows conventions but the mandatory Windows 10 + Windows 11 clean-machine tests must still be executed by the user.
 - **Root cause**: `requirements.txt` listed `emergentintegrations==0.2.0` which does not resolve on stock Python 3.11 (Windows pip). Confirmed via grep: **zero imports** in the entire backend — it was legacy.
 - **Additional removals** (all unused and known to cause Windows pip issues): `boto3`, `python-jose`, `requests-oauthlib`, `jq`, plus dev-only linters (`black`, `isort`, `flake8`, `mypy`) kept out of the production requirements.
 - **Added**: `openpyxl>=3.1.2` (silently needed by pandas Excel round-trip on the imports flow).
