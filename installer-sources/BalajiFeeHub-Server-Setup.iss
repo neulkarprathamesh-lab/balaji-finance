@@ -98,7 +98,7 @@ Filename: "{app}\01-install-main-server\install-main-server.bat"; \
   Flags: waituntilterminated
 
 ; --- 3. Post-install health check ---
-Filename: "cmd.exe"; Parameters: "/c curl -s -o nul -w %%^{http_code^} http://127.0.0.1:8001/api/version | findstr 200"; \
+Filename: "cmd.exe"; Parameters: "/c curl -s -o nul -w %{{http_code} http://127.0.0.1:8001/api/version | findstr 200"; \
   StatusMsg: "Verifying backend health..."; Flags: runhidden waituntilterminated
 
 ; --- 4. Open the app in the default browser after successful install ---
