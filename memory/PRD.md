@@ -84,6 +84,13 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - Rebuild anytime via Delivery Center → "Rebuild the production ZIP now" (Admin PIN).
 - **Download URL** (both localhost and preview): `/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip`
 
+### 2026-02-17 Install Blocker FIXED — `emergentintegrations` and other bloat deps removed
+- **Root cause**: `requirements.txt` listed `emergentintegrations==0.2.0` which does not resolve on stock Python 3.11 (Windows pip). Confirmed via grep: **zero imports** in the entire backend — it was legacy.
+- **Additional removals** (all unused and known to cause Windows pip issues): `boto3`, `python-jose`, `requests-oauthlib`, `jq`, plus dev-only linters (`black`, `isort`, `flake8`, `mypy`) kept out of the production requirements.
+- **Added**: `openpyxl>=3.1.2` (silently needed by pandas Excel round-trip on the imports flow).
+- **Verified**: `pip install --dry-run -r requirements.txt` succeeds, backend restarts clean on the new requirements, 17/17 pytest still pass.
+- **Rebuilt ZIP**: new file + new SHA-256, published to `/downloads/BalajiConventFeeSoftware_v1.0_FINAL.zip`.
+
 ## Remaining Production-Release Work (roadmap for next session)
 - P0: **Full E2E QA sweep** (testing agent across every module — Login, Dashboard, Students, Fee Collection, Every Receipt Type, Debit Voucher, Adjustments, Extensions, Bus, Reports, Verification, Parent Portal, Backup/Restore, Config Export/Import, Snapshots, Software Updates, Diagnostics, Delivery Center, Audit Logs, Global Search).
 - P0: **Debit Voucher deep enhancement** — approval workflow (threshold-based, default ₹10 000, admin-editable), person-wise ledger, dedicated DV Reports page, print_count/printed_by tracking, cheque/DD/UPI fields.
