@@ -623,7 +623,109 @@ function Stage-Verify {
         $failed++
     }
 
-    if ($failed -gt 0) { Die 90 'Verification' "$failed post-install check(s) failed" "Review $REPORT_FILE and $APP_LOGS\*.err.log" }
+    # ============================================================
+    # END-TO-END USER JOURNEY:
+    #   MongoDB -> DB layer -> Backend auth -> Frontend HTML -> Desktop app launch
+    # This is the real acceptance test; not passing = installation NOT successful.
+    # ============================================================
+    LogInfo 'End-to-end journey test  (MongoDB -> DB -> Backend -> Frontend HTML -> Desktop app)'
+
+    # 1) Auth endpoint reachable (proves backend + DB layer are fully wired)
+    try {
+        $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8001/api/auth/me' -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+        $Global:ComponentReport.Backend.Auth = "HTTP $($r.StatusCode) (unexpected 2xx without token - endpoint reachable)"
+        LogOK "Auth endpoint reachable (HTTP $($r.StatusCode))"
+    } catch [System.Net.WebException] {
+        $sc = $null; if ($_.Exception.Response) { $sc = [int]$_.Exception.Response.StatusCode }
+        if ($sc -in @(401, 403)) {
+            LogOK "Auth endpoint reachable (HTTP $sc = expected 'unauthenticated' - backend + DB layer OK)"
+            $Global:ComponentReport.Backend.Auth = "HTTP $sc (backend + DB wired correctly)"
+        } elseif ($sc -eq 500) {
+            LogWarn "Auth endpoint returned HTTP 500 - backend up but DB layer broken"
+            $Global:ComponentReport.Backend.Auth = "HTTP 500 (DB LAYER BROKEN)"
+            $failed++
+        } else {
+            LogWarn "Auth endpoint unreachable: $($_.Exception.Message)"
+            $Global:ComponentReport.Backend.Auth = "UNREACHABLE ($($_.Exception.Message))"
+            $failed++
+        }
+    } catch {
+        LogWarn "Auth endpoint error: $($_.Exception.Message)"
+        $Global:ComponentReport.Backend.Auth = "ERROR ($($_.Exception.Message))"
+        $failed++
+    }
+
+    # 2) Frontend HTML contains the React app markup (proves prebuilt bundle is served)
+    try {
+        $r = Invoke-WebRequest -Uri 'http://127.0.0.1:3000/' -UseBasicParsing -TimeoutSec 8
+        if ($r.Content -match 'Balaji|FeeHub|id=[''"]?root[''"]?') {
+            LogOK 'Frontend HTML contains React root / Balaji branding  ->  login screen will render'
+            $Global:ComponentReport.Frontend.Html = 'CONTAINS APP MARKUP'
+        } else {
+            LogWarn 'Frontend responds but HTML lacks expected app markup'
+            $Global:ComponentReport.Frontend.Html = 'MARKUP MISSING'
+            $failed++
+        }
+    } catch {
+        LogWarn "Frontend HTML fetch failed: $($_.Exception.Message)"
+        $Global:ComponentReport.Frontend.Html = "FETCH FAILED"
+        $failed++
+    }
+
+    # 3) Actually launch BalajiFeeHub.exe and verify it stays alive
+    $deskExe = "$DESKTOP\BalajiFeeHub.exe"
+    if (Test-Path $deskExe) {
+        LogInfo "Launching BalajiFeeHub.exe for end-to-end journey test (12s window)..."
+        try {
+            $proc = Start-Process -FilePath $deskExe -PassThru -WorkingDirectory $DESKTOP -WindowStyle Normal
+            Start-Sleep -Seconds 12
+            if ($proc.HasExited) {
+                LogWarn "BalajiFeeHub.exe crashed within 12s (exit code $($proc.ExitCode))"
+                $Global:ComponentReport.Desktop.Launch = "CRASHED (exit $($proc.ExitCode))"
+                $failed++
+            } else {
+                # Look for our window title in any process (Electron often spawns children)
+                $balajiWin = Get-Process -ErrorAction SilentlyContinue |
+                    Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle -match 'Balaji' } |
+                    Select-Object -First 1
+                if ($balajiWin) {
+                    LogOK "Desktop app RUNNING with window '$($balajiWin.MainWindowTitle)'  ->  login screen reachable"
+                    $Global:ComponentReport.Desktop.Launch = "RUNNING (window: '$($balajiWin.MainWindowTitle)')"
+                } else {
+                    LogOK "Desktop app process alive (PID $($proc.Id)) - login window still initializing"
+                    $Global:ComponentReport.Desktop.Launch = "RUNNING (PID $($proc.Id))"
+                }
+            }
+        } catch {
+            LogWarn "Failed to launch BalajiFeeHub.exe: $($_.Exception.Message)"
+            $Global:ComponentReport.Desktop.Launch = "LAUNCH FAILED ($($_.Exception.Message))"
+            $failed++
+        }
+    } else {
+        LogWarn "BalajiFeeHub.exe not found for launch test"
+        $Global:ComponentReport.Desktop.Launch = "EXE MISSING"
+        $failed++
+    }
+
+    # 4) Windows-restart persistence: every service must be AUTO_START
+    $svcNames = @()
+    if ($Global:ComponentReport.MongoDB.Service) { $svcNames += $Global:ComponentReport.MongoDB.Service }
+    $svcNames += 'BalajiFeeHub-Backend'
+    $svcNames += 'BalajiFeeHub-Frontend'
+    foreach ($sName in $svcNames) {
+        $qc = & sc.exe qc "$sName" 2>&1 | Out-String
+        if ($qc -match 'AUTO_START') {
+            LogOK "$sName will auto-start on Windows boot"
+        } else {
+            LogWarn "$sName is NOT AUTO_START - Windows restart will leave it stopped"
+            try { & sc.exe config "$sName" start= auto | Out-Null; LogOK "$sName auto-repair: set to AUTO_START" } catch { $failed++ }
+        }
+    }
+    $Global:ComponentReport.Restart = @{ Verified = if ($failed -eq 0) { 'ALL SERVICES AUTO_START (survives Windows reboot)' } else { 'AUTO_START MISCONFIG - see warnings above' } }
+
+    if ($failed -gt 0) {
+        Die 90 'End-to-end journey verification' "$failed check(s) failed" "The MongoDB -> DB -> Backend -> Frontend -> Desktop-App journey did not complete. Review $REPORT_FILE and $APP_LOGS\*.err.log for the exact failed stage + remediation."
+    }
 }
 
 # ================================================================
@@ -663,20 +765,26 @@ function Stage-Report {
         "  Action taken     : $($cr.Backend.Action)",
         "  Port 8001        : $($cr.Backend.Port)",
         "  API /api/version : $($cr.Backend.Api)",
+        "  Auth endpoint    : $($cr.Backend.Auth)",
         '',
         'Frontend',
         "  Windows service  : $($cr.Frontend.Service)",
         "  Action taken     : $($cr.Frontend.Action)",
         "  Port 3000        : $($cr.Frontend.Port)",
         "  Response         : $($cr.Frontend.Response)",
+        "  HTML markup      : $($cr.Frontend.Html)",
         '',
         'Desktop application',
         "  Path             : $($cr.Desktop.Path)",
         "  Status           : $($cr.Desktop.Status)",
+        "  Launch test      : $($cr.Desktop.Launch)",
         '',
         'LAN',
         "  Main Server IP   : $($cr.Lan.Ip)",
         "  Status           : $($cr.Lan.Status)",
+        '',
+        'Windows restart persistence',
+        "  Verified         : $($cr.Restart.Verified)",
         '',
         '================================================================',
         '  All three services are set to start automatically at Windows',

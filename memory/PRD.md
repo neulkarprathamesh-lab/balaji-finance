@@ -23,6 +23,16 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-25 Additions — End-to-end user journey verification (this session)
+- **Stage 13 extended with real user-journey acceptance tests**. `INSTALLATION SUCCESSFUL` now requires the ENTIRE chain to work end-to-end, not just individual components:
+  1. **MongoDB -> DB layer**: `pymongo.ping()` succeeds (auto-repair retry if not).
+  2. **Backend auth wiring**: `GET /api/auth/me` returns 401/403 (proves backend + DB layer + JWT middleware are wired correctly). 500 = DB layer broken and installer fails. Unreachable = installer fails.
+  3. **Frontend serves the app**: `GET /` HTML is fetched and regex-matched against `Balaji|FeeHub|id="root"` — confirms the prebuilt React bundle is actually being served, not a blank page.
+  4. **Desktop application launches**: `Start-Process $DESKTOP\BalajiFeeHub.exe`, sleep 12s, check `HasExited` — if crashed within 12s, fail with the exit code. If still alive, hunt for a window titled `*Balaji*` via `Get-Process | Where MainWindowTitle -match 'Balaji'`. Records `RUNNING (window: 'Balaji FeeHub')` in the report.
+  5. **Restart persistence**: `sc.exe qc` on every service, verifies `AUTO_START` in output; auto-repairs any drift via `sc.exe config … start= auto`. The report explicitly says `ALL SERVICES AUTO_START (survives Windows reboot)`.
+- **Failure surfaces the exact stage + remediation** — no more generic exit codes. `Die 90 'End-to-end journey verification'` names the failing chain link and points to `installation-report.txt` + `logs\*.err.log`.
+- **Component report** now includes `Auth endpoint`, `HTML markup`, `Launch test`, and `Restart persistence` rows.
+
 ### 2026-02-24 Additions — Idempotent detect/reuse/repair/create (this session)
 - **`Ensure-Service` + `Apply-NssmSpec` helpers**: refactored `Stage-Services` from destructive "remove-and-reinstall" to a real detect→inspect→reuse/repair/create state machine. If service exists AND `Application` + `AppParameters` match expected → `REUSED` (log paths/restart policy refreshed idempotently). If exists but mismatched → `REPAIRED` in place (no remove). If missing → `CREATED`.
 - **External MongoDB service reused as-is**: if `Detect-MongoDb` finds an existing MongoDB Windows service (e.g. `MongoDB`), we DO NOT register a duplicate `BalajiFeeHub-Mongo` — instead Backend's `DependOnService` points at the existing service and we set it to `Automatic` + start it. Prevents two `mongod` fighting over port 27017.
