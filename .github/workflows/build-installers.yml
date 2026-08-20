@@ -108,6 +108,7 @@ jobs:
           # Map source of truth -> destination inside the extracted payload
           $overlays = @(
             @{ src = "install-main-server.bat"; dst = "01-install-main-server\install-main-server.bat" },
+            @{ src = "install-main-server.ps1"; dst = "01-install-main-server\install-main-server.ps1" },
             @{ src = "repair-installation.bat"; dst = "01-install-main-server\repair-installation.bat" },
             @{ src = "backup-now.bat";          dst = "01-install-main-server\backup-now.bat"          },
             @{ src = "install-client-pc.bat";   dst = "02-install-client-pc\install-client-pc.bat"     }

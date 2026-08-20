@@ -23,6 +23,22 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-23 Additions — Self-diagnosing PowerShell installer (this session)
+- **Complete rewrite from batch to PowerShell orchestrator**: `install-main-server.ps1` (587 lines) is now the single source of truth for the Main Server installation. `install-main-server.bat` becomes a 22-line thin wrapper (calls `powershell -NoProfile -ExecutionPolicy Bypass -File install-main-server.ps1`) so the Inno `.iss`, Start Menu Repair shortcut, and legacy docs all keep working unchanged.
+- **14 stages, each with structured error handling and unique exit codes** (10-99, never generic 255). Each stage writes to both console (colour-coded) and `C:\balaji-fee\logs\installation-report.txt`.
+- **Stage 1 - System check** (11-22): OS + 64-bit + Administrator + disk >= 5 GB + RAM >= 3 GB + LAN gateway + Firewall service (auto-repair) + msiserver + PowerShell 5+ + Python 3.11 x64 + pip.
+- **Stage 2 - MongoDB detection (5 strategies)**: (A) Win32_Service PathName scan for any service running mongod.exe, (B) Registry `HKLM:\SOFTWARE\MongoDB\Server\*` in both 64-bit and WoW64 views, (C) recursive scan of `%ProgramFiles%\MongoDB`, `%ProgramFiles(x86)%\MongoDB`, `%ProgramData%\MongoDB`, (D) PATH lookup, (E) bundled fallback. Dedupes by full path, prefers service-installed candidate, extracts version. **This directly fixes the "where mongod fails" real-world regression.**
+- **Stage 3 - Port conflict analysis**: 27017 free / held-by-our-Mongo / held-by-unknown-process (STOP + explain). Same for 8001 and 3000, tolerates our own restart.
+- **Stage 4 - Existing install detection + auto-backup**: detects `mongodb\data\WiredTiger`, invokes `mongodump.exe` from the detected MongoDB's own bin directory (not PATH-dependent), aborts on backup failure. Copies backend/.env + frontend/.env as .bak.
+- **Stages 5-8 - Copy source + venv + offline pip + config**: fresh venv creation with clear error on failure, offline pip install from wheelhouse, hard 13-package import verification, secure random JWT_SECRET generation, existing .env preserved.
+- **Stage 9 - MongoDB install/reuse/start**: if detected → reuse (auto-start service if stopped); if missing → recombine split MSI, size-validate (>= 50 MB), silent msiexec (accepts 0 or 3010), re-detect via same 5-strategy scan after install.
+- **Stage 10 - Firewall**: creates only 8001 + 3000 rules via `New-NetFirewallRule` (removes any stale ones first); explicitly removes any 27017 rule (Mongo stays 127.0.0.1-only, never LAN-exposed).
+- **Stage 11 - Windows services**: NSSM registration with proper metadata: service description, `AppRestartDelay`, `AppExit Default Restart` (auto-restart on failure), `AppThrottle`, log rotation (20 MB), dependency chain Mongo -> Backend -> Frontend, all `SERVICE_AUTO_START` so they survive Windows reboot.
+- **Stage 12 - Start with dependency-order verification**: Start-Service each in order, 3s settle, throws if not `Running`.
+- **Stage 13 - Real functional verification**: MongoDB ping via pymongo (auto-repair: restart Mongo once), ports LISTENING via Get-NetTCPConnection, HTTP 200 on `/api/version` + `/` via Invoke-WebRequest with retry, desktop EXE existence, LAN IP non-loopback.
+- **Stage 14 - Installation report**: colour-coded success summary + full audit trail written to `C:\balaji-fee\logs\installation-report.txt`.
+- **GHA workflow overlay** updated to include the new `.ps1` file alongside the batch wrappers.
+
 ### 2026-02-22 Additions — Stage 3 MongoDB installer rewrite (this session)
 - Reproduced on real Windows 11: `... was unexpected at this time` at `[3/14]` MongoDB stage. Root causes: (a) `%ERRORLEVEL%` was parse-time-expanded inside parenthesized `if/else` blocks (so post-msiexec check saw stale value), (b) nested `if not exist (…) else (…)` around a `for /f` on the same line confused cmd's parser.
 - Rewrote Stage 3 as linear `GOTO`-labeled blocks with `if errorlevel 1` semantics and `!ERRORLEVEL!` where needed. Zero parenthesized `if (…)` groups in the stage now.
