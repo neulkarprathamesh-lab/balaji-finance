@@ -163,13 +163,22 @@ jobs:
           Write-Host "Verifying imports of critical production packages..."
           & $vpy -c "import fastapi, uvicorn, motor, pymongo, pydantic, jwt, bcrypt, cryptography, pandas, numpy, openpyxl, dotenv, requests; print('All 13 imports OK')"
           if ($LASTEXITCODE -ne 0) { throw "OFFLINE VERIFY: critical package import test failed with exit $LASTEXITCODE" }
-          # Start the backend against a stub Mongo (won't actually connect, but must at
-          # least import server.py without ImportError).
+          # Set the exact env vars core.py reads at module load time so the
+          # import test can prove server.py + every router is importable.
+          # These values live only in the CI process - production installations
+          # generate their own .env in install-main-server.bat step 6/14 and
+          # MongoDB stays bound to 127.0.0.1.
+          $env:MONGO_URL      = "mongodb://127.0.0.1:27017"
+          $env:DB_NAME        = "balaji_fee_ci_verify"
+          $env:JWT_SECRET     = "ci-verify-only-not-used-in-production"
+          $env:ADMIN_EMAIL    = "ci@balajiconvent.in"
+          $env:ADMIN_PASSWORD = "ci-verify-only"
+          $env:CORS_ORIGINS   = "*"
           $backend = Join-Path $payload "03-source-code\backend"
           Push-Location $backend
           try {
             & $vpy -c "import sys; sys.path.insert(0, '.'); import importlib; importlib.import_module('server'); print('backend server.py imports OK')"
-            if ($LASTEXITCODE -ne 0) { Write-Warning "backend server.py import returned $LASTEXITCODE (non-fatal - env may need MONGO_URL). Continuing." }
+            if ($LASTEXITCODE -ne 0) { throw "OFFLINE VERIFY: backend server.py failed to import with exit $LASTEXITCODE - a production config or import is missing" }
           } finally {
             Pop-Location
           }
