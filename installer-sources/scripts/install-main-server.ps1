@@ -48,6 +48,7 @@ $REPORT_FILE   = "$APP_LOGS\installation-report.txt"
 $Global:Report = New-Object System.Collections.Generic.List[string]
 $Global:LanIp  = $null
 $Global:MongoInfo = $null
+$Global:ComponentReport = @{}   # per-component detect/action/status matrix for final report
 
 # ---------------- Reporting helpers ----------------
 function Emit {
@@ -415,41 +416,105 @@ function Stage-Firewall {
 }
 
 # ================================================================
-#  STAGE 11: Windows services (NSSM, restart-on-failure, dependency)
+#  STAGE 11: Windows services - detect / reuse / repair / create
+#  Idempotent: safe to re-run. Never removes+recreates when the
+#  existing service configuration is already correct.
 # ================================================================
+function Apply-NssmSpec {
+    param([hashtable]$Spec, [switch]$SkipCoreBinArgs)
+    if (-not $SkipCoreBinArgs) {
+        & $NSSM set $Spec.name Application  $Spec.bin  *> $null
+        & $NSSM set $Spec.name AppParameters $Spec.args *> $null
+    }
+    & $NSSM set $Spec.name Start SERVICE_AUTO_START *> $null
+    & $NSSM set $Spec.name AppStdout "$APP_LOGS\$($Spec.name).log" *> $null
+    & $NSSM set $Spec.name AppStderr "$APP_LOGS\$($Spec.name).err.log" *> $null
+    & $NSSM set $Spec.name AppRotateFiles 1 *> $null
+    & $NSSM set $Spec.name AppRotateBytes 20971520 *> $null
+    & $NSSM set $Spec.name AppRestartDelay 5000 *> $null
+    & $NSSM set $Spec.name AppExit Default Restart *> $null
+    & $NSSM set $Spec.name AppThrottle 3000 *> $null
+    & $NSSM set $Spec.name Description $Spec.desc *> $null
+    if ($Spec.deps -and $Spec.deps.Count -gt 0) {
+        & $NSSM set $Spec.name DependOnService $Spec.deps *> $null
+    }
+}
+
+function Ensure-Service {
+    # Detect - Inspect - Reuse/Repair/Create. Returns 'CREATED' | 'REUSED' | 'REPAIRED'.
+    param([hashtable]$Spec)
+    $svc = Get-Service -Name $Spec.name -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        LogInfo "Service $($Spec.name)  ->  not found, CREATING"
+        & $NSSM install $Spec.name $Spec.bin *> $null
+        if ($LASTEXITCODE -ne 0) { Die 72 'Service create' "NSSM install $($Spec.name) failed" 'Confirm NSSM.exe is present and the account is admin.' }
+        Apply-NssmSpec $Spec
+        LogOK "Service $($Spec.name)  ->  CREATED"
+        return 'CREATED'
+    }
+    # Service exists - inspect current config
+    $curBin  = (& $NSSM get $Spec.name Application  2>$null).Trim()
+    $curArgs = (& $NSSM get $Spec.name AppParameters 2>$null).Trim()
+    if ($curBin -ieq $Spec.bin -and $curArgs -ieq $Spec.args) {
+        LogOK "Service $($Spec.name)  ->  already correctly configured, REUSING"
+        Apply-NssmSpec $Spec -SkipCoreBinArgs   # refresh log paths / restart policy idempotently
+        return 'REUSED'
+    }
+    LogWarn "Service $($Spec.name)  ->  exists with different config, REPAIRING in place"
+    LogInfo "  Current bin  : $curBin"
+    LogInfo "  Expected bin : $($Spec.bin)"
+    LogInfo "  Current args : $curArgs"
+    LogInfo "  Expected args: $($Spec.args)"
+    if ($svc.Status -eq 'Running') { try { Stop-Service $Spec.name -Force -ErrorAction Stop } catch {} }
+    Apply-NssmSpec $Spec
+    LogOK "Service $($Spec.name)  ->  REPAIRED"
+    return 'REPAIRED'
+}
+
 function Stage-Services {
-    LogStep 'Stage 11/14: Windows service registration'
+    LogStep 'Stage 11/14: Windows services  ->  detect / reuse / repair / create'
     if (-not (Test-Path $NSSM)) { Die 70 'NSSM missing' "NSSM not found at $NSSM" 'Re-download the Server installer.' }
-    $mongod = $Global:MongoInfo.path
-    if (-not $mongod -or -not (Test-Path $mongod)) { Die 71 'Service reg' 'mongod.exe path unresolved before service registration' 'Contact support.' }
+    if (-not $Global:MongoInfo -or -not (Test-Path $Global:MongoInfo.path)) { Die 71 'Service reg' 'mongod.exe path unresolved before service registration' 'Contact support.' }
 
-    # Reset any existing services (idempotent)
-    foreach ($s in @('BalajiFeeHub-Frontend','BalajiFeeHub-Backend','BalajiFeeHub-Mongo')) {
-        try { Stop-Service $s -Force -ErrorAction SilentlyContinue } catch {}
-        try { & $NSSM remove $s confirm *> $null } catch {}
+    # -------- MongoDB service dependency name --------
+    # If an existing MongoDB service was detected (installed independently, e.g. by
+    # the school's IT), reuse ITS service name as the Backend dependency instead of
+    # duplicating a BalajiFeeHub-Mongo service on top. This avoids two mongod
+    # instances fighting for port 27017 and keeps the installer idempotent.
+    $mongoSvcName = 'BalajiFeeHub-Mongo'
+    if ($Global:MongoInfo.svc -and $Global:MongoInfo.svc -ne 'BalajiFeeHub-Mongo') {
+        $mongoSvcName = $Global:MongoInfo.svc
+        # Make sure the external service is running + auto-start
+        try { Set-Service $mongoSvcName -StartupType Automatic -ErrorAction Stop } catch {}
+        $mstate = (Get-Service $mongoSvcName).Status
+        if ($mstate -ne 'Running') { try { Start-Service $mongoSvcName -ErrorAction Stop } catch {} ; Start-Sleep 4 }
+        LogOK "MongoDB service '$mongoSvcName' (existing, external)  ->  REUSED, StartupType=Automatic"
+        $Global:ComponentReport.MongoDB = @{ Detection=$Global:MongoInfo.method; Service=$mongoSvcName; Action='REUSED (external service)'; Path=$Global:MongoInfo.path; Version=$Global:MongoInfo.version }
+    } else {
+        $mongoSpec = @{ name='BalajiFeeHub-Mongo'; bin=$Global:MongoInfo.path; args="--config `"$MONGO_CFG`""; deps=@(); desc='Balaji FeeHub - MongoDB database service (bound to 127.0.0.1 only)' }
+        $act = Ensure-Service $mongoSpec
+        $Global:ComponentReport.MongoDB = @{ Detection=$Global:MongoInfo.method; Service='BalajiFeeHub-Mongo'; Action=$act; Path=$Global:MongoInfo.path; Version=$Global:MongoInfo.version }
     }
 
-    # Register with proper metadata + auto-restart on failure
-    $svcSpecs = @(
-        @{ name='BalajiFeeHub-Mongo';    bin=$mongod;                              args="--config `"$MONGO_CFG`"";                                                             deps=@();                       desc='Balaji FeeHub - MongoDB database service (bound to 127.0.0.1)' },
-        @{ name='BalajiFeeHub-Backend';  bin="$VENV\Scripts\python.exe";           args="-m uvicorn server:app --host 0.0.0.0 --port 8001 --app-dir `"$APP_BACKEND`"";        deps=@('BalajiFeeHub-Mongo');   desc='Balaji FeeHub - FastAPI backend API service' },
-        @{ name='BalajiFeeHub-Frontend'; bin="$VENV\Scripts\python.exe";           args="-m http.server 3000 --directory `"$APP_FRONTEND\build`"";                             deps=@('BalajiFeeHub-Backend'); desc='Balaji FeeHub - Prebuilt React frontend static server' }
-    )
-    foreach ($s in $svcSpecs) {
-        & $NSSM install $s.name $s.bin *> $null
-        & $NSSM set $s.name AppParameters $s.args *> $null
-        & $NSSM set $s.name Start SERVICE_AUTO_START *> $null
-        & $NSSM set $s.name AppStdout "$APP_LOGS\$($s.name).log" *> $null
-        & $NSSM set $s.name AppStderr "$APP_LOGS\$($s.name).err.log" *> $null
-        & $NSSM set $s.name AppRotateFiles 1 *> $null
-        & $NSSM set $s.name AppRotateBytes 20971520 *> $null
-        & $NSSM set $s.name AppRestartDelay 5000 *> $null
-        & $NSSM set $s.name AppExit Default Restart *> $null
-        & $NSSM set $s.name AppThrottle 3000 *> $null
-        & $NSSM set $s.name Description $s.desc *> $null
-        if ($s.deps.Count -gt 0) { & $NSSM set $s.name DependOnService $s.deps *> $null }
-        LogOK "Registered service $($s.name)"
+    # -------- Backend --------
+    $backendSpec = @{
+        name='BalajiFeeHub-Backend'
+        bin ="$VENV\Scripts\python.exe"
+        args="-m uvicorn server:app --host 0.0.0.0 --port 8001 --app-dir `"$APP_BACKEND`""
+        deps=@($mongoSvcName)
+        desc='Balaji FeeHub - FastAPI backend API service (port 8001)'
     }
+    $Global:ComponentReport.Backend = @{ Service='BalajiFeeHub-Backend'; Action=(Ensure-Service $backendSpec) }
+
+    # -------- Frontend / static app server --------
+    $frontendSpec = @{
+        name='BalajiFeeHub-Frontend'
+        bin ="$VENV\Scripts\python.exe"
+        args="-m http.server 3000 --directory `"$APP_FRONTEND\build`""
+        deps=@('BalajiFeeHub-Backend')
+        desc='Balaji FeeHub - Prebuilt React frontend static server (port 3000)'
+    }
+    $Global:ComponentReport.Frontend = @{ Service='BalajiFeeHub-Frontend'; Action=(Ensure-Service $frontendSpec) }
 }
 
 # ================================================================
@@ -484,28 +549,79 @@ function Test-Http {
 function Stage-Verify {
     LogStep 'Stage 13/14: Real functional verification'
     $failed = 0
-    # MongoDB reachability
-    LogInfo 'Testing backend -> MongoDB ping...'
-    & "$VENV\Scripts\python.exe" -c "from pymongo import MongoClient; MongoClient('mongodb://127.0.0.1:27017', serverSelectionTimeoutMS=10000).admin.command('ping'); print('ok')" 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { LogOK 'Backend -> MongoDB ping succeeded' } else { LogWarn 'Backend -> MongoDB ping FAILED (auto-repair: restarting Mongo)'; Restart-Service BalajiFeeHub-Mongo -Force; Start-Sleep 5; & "$VENV\Scripts\python.exe" -c "from pymongo import MongoClient; MongoClient('mongodb://127.0.0.1:27017', serverSelectionTimeoutMS=10000).admin.command('ping')" 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { $failed++ } else { LogOK 'MongoDB reachable after restart' } }
 
-    # Ports listening
-    foreach ($p in @(27017,8001,3000)) {
-        $conn = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
-        if ($conn) { LogOK "Port $p LISTENING (PID $($conn.OwningProcess))" } else { LogWarn "Port $p NOT listening"; $failed++ }
+    # MongoDB reachability (auto-repair one-shot restart if it fails)
+    LogInfo 'Testing backend  ->  MongoDB ping via pymongo...'
+    & "$VENV\Scripts\python.exe" -c "from pymongo import MongoClient; MongoClient('mongodb://127.0.0.1:27017', serverSelectionTimeoutMS=10000).admin.command('ping')" 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { LogOK 'Backend  ->  MongoDB ping succeeded' ; $Global:ComponentReport.MongoDB.DbPing = 'OK' }
+    else {
+        LogWarn 'MongoDB ping FAILED - auto-repair: restarting Mongo service once...'
+        try { Restart-Service ($Global:ComponentReport.MongoDB.Service) -Force -ErrorAction Stop } catch {}
+        Start-Sleep 6
+        & "$VENV\Scripts\python.exe" -c "from pymongo import MongoClient; MongoClient('mongodb://127.0.0.1:27017', serverSelectionTimeoutMS=10000).admin.command('ping')" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { LogOK 'MongoDB reachable after auto-repair restart'; $Global:ComponentReport.MongoDB.DbPing = 'OK (after auto-repair)' }
+        else { $failed++; $Global:ComponentReport.MongoDB.DbPing = 'FAILED' }
     }
 
-    # Backend /api/version = HTTP 200
-    if (Test-Http 'http://127.0.0.1:8001/api/version' 8 6) { LogOK 'Backend GET /api/version = HTTP 200' } else { LogWarn 'Backend not responding on /api/version'; $failed++ }
+    # Ports LISTENING
+    foreach ($p in @(27017,8001,3000)) {
+        $conn = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
+        if ($conn) {
+            LogOK "Port $p LISTENING (PID $($conn.OwningProcess))"
+            switch ($p) {
+                27017 { $Global:ComponentReport.MongoDB.Port  = "$p LISTENING (PID $($conn.OwningProcess))" }
+                8001  { $Global:ComponentReport.Backend.Port  = "$p LISTENING (PID $($conn.OwningProcess))" }
+                3000  { $Global:ComponentReport.Frontend.Port = "$p LISTENING (PID $($conn.OwningProcess))" }
+            }
+        } else {
+            LogWarn "Port $p NOT listening"; $failed++
+            switch ($p) {
+                27017 { $Global:ComponentReport.MongoDB.Port  = "$p NOT LISTENING" }
+                8001  { $Global:ComponentReport.Backend.Port  = "$p NOT LISTENING" }
+                3000  { $Global:ComponentReport.Frontend.Port = "$p NOT LISTENING" }
+            }
+        }
+    }
+
+    # Backend /api/version = HTTP 200 with retry
+    if (Test-Http 'http://127.0.0.1:8001/api/version' 8 6) {
+        LogOK 'Backend GET /api/version = HTTP 200'
+        $Global:ComponentReport.Backend.Api = 'HTTP 200'
+    } else {
+        LogWarn 'Backend not responding on /api/version'
+        $Global:ComponentReport.Backend.Api = 'NOT RESPONDING'
+        $failed++
+    }
 
     # Frontend
-    if (Test-Http 'http://127.0.0.1:3000/' 8 3) { LogOK 'Frontend GET / = HTTP 200' } else { LogWarn 'Frontend not responding on /'; $failed++ }
+    if (Test-Http 'http://127.0.0.1:3000/' 8 3) {
+        LogOK 'Frontend GET / = HTTP 200'
+        $Global:ComponentReport.Frontend.Response = 'HTTP 200'
+    } else {
+        LogWarn 'Frontend not responding on /'
+        $Global:ComponentReport.Frontend.Response = 'NOT RESPONDING'
+        $failed++
+    }
 
     # Desktop app existence
-    if (Test-Path "$DESKTOP\BalajiFeeHub.exe") { LogOK "Desktop app: $DESKTOP\BalajiFeeHub.exe" } else { LogWarn 'BalajiFeeHub.exe missing from payload'; $failed++ }
+    if (Test-Path "$DESKTOP\BalajiFeeHub.exe") {
+        LogOK "Desktop app located: $DESKTOP\BalajiFeeHub.exe"
+        $Global:ComponentReport.Desktop = @{ Path="$DESKTOP\BalajiFeeHub.exe"; Status='READY' }
+    } else {
+        LogWarn 'BalajiFeeHub.exe missing from payload'
+        $Global:ComponentReport.Desktop = @{ Path='(missing)'; Status='NOT FOUND' }
+        $failed++
+    }
 
-    # LAN IP is non-loopback
-    if ($Global:LanIp -and $Global:LanIp -ne '127.0.0.1') { LogOK "LAN reachable at http://$Global:LanIp`:3000" } else { LogWarn 'No LAN IP - only reachable at localhost'; $failed++ }
+    # LAN reachability
+    if ($Global:LanIp -and $Global:LanIp -ne '127.0.0.1') {
+        LogOK "LAN reachable at http://$Global:LanIp`:3000"
+        $Global:ComponentReport.Lan = @{ Ip=$Global:LanIp; Status='READY' }
+    } else {
+        LogWarn 'No LAN IP - only reachable at localhost'
+        $Global:ComponentReport.Lan = @{ Ip='127.0.0.1'; Status='LOCALHOST ONLY' }
+        $failed++
+    }
 
     if ($failed -gt 0) { Die 90 'Verification' "$failed post-install check(s) failed" "Review $REPORT_FILE and $APP_LOGS\*.err.log" }
 }
@@ -515,6 +631,8 @@ function Stage-Verify {
 # ================================================================
 function Stage-Report {
     LogStep 'Stage 14/14: Installation report'
+    $cr = $Global:ComponentReport
+
     $lines = @(
         '================================================================',
         '  BALAJI FEE HUB  -  INSTALLATION SUCCESSFUL',
@@ -526,14 +644,44 @@ function Stage-Report {
         "  Data directory   : $MONGO_DATA",
         "  Backups dir      : $APP_BACKUPS",
         "  Logs             : $APP_LOGS",
-        "  MongoDB          : $($Global:MongoInfo.path) (v$($Global:MongoInfo.version))",
         '',
-        '  Services (auto-start, auto-restart on failure):',
-        "    - BalajiFeeHub-Mongo    ($(Get-Service BalajiFeeHub-Mongo).Status)",
-        "    - BalajiFeeHub-Backend  ($(Get-Service BalajiFeeHub-Backend).Status)",
-        "    - BalajiFeeHub-Frontend ($(Get-Service BalajiFeeHub-Frontend).Status)",
+        '================================================================',
+        '  COMPONENT STATUS  (detect / action / verify)',
+        '================================================================',
         '',
-        '  Firewall:  8001 + 3000 allowed inbound (Mongo 27017 stays private)',
+        'MongoDB',
+        "  Detection method : $($cr.MongoDB.Detection)",
+        "  Executable path  : $($cr.MongoDB.Path)",
+        "  Version          : $($cr.MongoDB.Version)",
+        "  Windows service  : $($cr.MongoDB.Service)",
+        "  Action taken     : $($cr.MongoDB.Action)",
+        "  Port 27017       : $($cr.MongoDB.Port)",
+        "  Database ping    : $($cr.MongoDB.DbPing)",
+        '',
+        'Backend',
+        "  Windows service  : $($cr.Backend.Service)",
+        "  Action taken     : $($cr.Backend.Action)",
+        "  Port 8001        : $($cr.Backend.Port)",
+        "  API /api/version : $($cr.Backend.Api)",
+        '',
+        'Frontend',
+        "  Windows service  : $($cr.Frontend.Service)",
+        "  Action taken     : $($cr.Frontend.Action)",
+        "  Port 3000        : $($cr.Frontend.Port)",
+        "  Response         : $($cr.Frontend.Response)",
+        '',
+        'Desktop application',
+        "  Path             : $($cr.Desktop.Path)",
+        "  Status           : $($cr.Desktop.Status)",
+        '',
+        'LAN',
+        "  Main Server IP   : $($cr.Lan.Ip)",
+        "  Status           : $($cr.Lan.Status)",
+        '',
+        '================================================================',
+        '  All three services are set to start automatically at Windows',
+        '  boot with restart-on-failure. MongoDB stays bound to 127.0.0.1.',
+        '  Firewall allows only 8001 + 3000 inbound.',
         '',
         '  Next steps:',
         '    - Double-click Balaji FeeHub on the desktop to open the app',

@@ -23,6 +23,13 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-24 Additions — Idempotent detect/reuse/repair/create (this session)
+- **`Ensure-Service` + `Apply-NssmSpec` helpers**: refactored `Stage-Services` from destructive "remove-and-reinstall" to a real detect→inspect→reuse/repair/create state machine. If service exists AND `Application` + `AppParameters` match expected → `REUSED` (log paths/restart policy refreshed idempotently). If exists but mismatched → `REPAIRED` in place (no remove). If missing → `CREATED`.
+- **External MongoDB service reused as-is**: if `Detect-MongoDb` finds an existing MongoDB Windows service (e.g. `MongoDB`), we DO NOT register a duplicate `BalajiFeeHub-Mongo` — instead Backend's `DependOnService` points at the existing service and we set it to `Automatic` + start it. Prevents two `mongod` fighting over port 27017.
+- **`$Global:ComponentReport` matrix**: every stage records `Detection`, `Action`, `Port`, `Api` / `DbPing` / `Response` per component. Final report now prints structured `MongoDB / Backend / Frontend / Desktop / LAN` sections explicitly showing `Action taken: REUSED | CREATED | REPAIRED` and functional-test results — matches the user's requested output format exactly.
+- **Fully idempotent**: running the installer twice is safe. Second run detects existing MongoDB → reuses. Detects existing services with correct config → reuses. Fixes drift automatically without touching production data.
+- **CI overlay** already includes `install-main-server.ps1` (verified) so the CORE.zip's stale scripts get overwritten by the fresh repo version on every build. The Server EXE will always contain the latest `.ps1`.
+
 ### 2026-02-23 Additions — Self-diagnosing PowerShell installer (this session)
 - **Complete rewrite from batch to PowerShell orchestrator**: `install-main-server.ps1` (587 lines) is now the single source of truth for the Main Server installation. `install-main-server.bat` becomes a 22-line thin wrapper (calls `powershell -NoProfile -ExecutionPolicy Bypass -File install-main-server.ps1`) so the Inno `.iss`, Start Menu Repair shortcut, and legacy docs all keep working unchanged.
 - **14 stages, each with structured error handling and unique exit codes** (10-99, never generic 255). Each stage writes to both console (colour-coded) and `C:\balaji-fee\logs\installation-report.txt`.
