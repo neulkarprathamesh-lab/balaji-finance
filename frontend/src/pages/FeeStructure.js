@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
 import { toast } from 'sonner';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Eye } from 'lucide-react';
 
 export default function FeeStructure() {
   const [depts, setDepts] = useState([]);
@@ -14,6 +14,7 @@ export default function FeeStructure() {
   const [items, setItems] = useState([]);
   const [dup, setDup] = useState(null);
   const [seeding, setSeeding] = useState(false);
+  const [preview, setPreview] = useState(null);
 
   const reload = async () => {
     const [d, c, h, s] = await Promise.all([

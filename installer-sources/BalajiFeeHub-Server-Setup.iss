@@ -86,38 +86,79 @@ Name: "{group}\Repair Balaji FeeHub Server";        Filename: "{app}\01-install-
 Name: "{group}\Uninstall Balaji FeeHub Server";     Filename: "{uninstallexe}"
 
 [Run]
-; --- 1. Run preflight; abort if it exits non-zero ---
-Filename: "{app}\01-install-main-server\preflight.bat";          \
-  StatusMsg: "Running preflight checks..."; \
-  Flags: waituntilterminated; \
-  Check: PreflightMustPass
-
-; --- 2. Run the main installer (14 stages, ~10 minutes) ---
-Filename: "{app}\01-install-main-server\install-main-server.bat"; \
-  StatusMsg: "Installing MongoDB, backend, frontend and Windows services...";  \
-  Flags: waituntilterminated
-
-; --- 3. Post-install health check ---
-Filename: "cmd.exe"; Parameters: "/c curl -s -o nul -w %{{http_code} http://127.0.0.1:8001/api/version | findstr 200"; \
-  StatusMsg: "Verifying backend health..."; Flags: runhidden waituntilterminated
-
-; --- 4. Open the app in the default browser after successful install ---
+; The 14-stage install is orchestrated from [Code]::CurStepChanged so we can
+; capture the batch script's exit code and abort with a clear failure message
+; instead of silently continuing after a broken offline wheelhouse or a failed
+; MongoDB MSI install. Only the post-install browser launch stays here.
 Filename: "http://127.0.0.1:3000"; Flags: postinstall shellexec skipifsilent
 
 [UninstallRun]
 Filename: "{app}\01-install-main-server\uninstall.bat"; Flags: runhidden waituntilterminated
 
 [Code]
-function PreflightMustPass(): Boolean;
+procedure RunStageOrAbort(BatFile, StatusMsg, FailReason: String);
 var
   ResultCode: Integer;
+  Ok: Boolean;
 begin
-  Exec(ExpandConstant('{app}\01-install-main-server\preflight.bat'), '', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
-  Result := (ResultCode = 0);
-  if not Result then
-    MsgBox('Preflight checks reported one or more BLOCKING errors. See the console output above.'#13#10#13#10 +
-           'Installation cannot continue until the blocking issues are fixed.',
-           mbCriticalError, MB_OK);
+  WizardForm.StatusLabel.Caption := StatusMsg;
+  Ok := Exec(ExpandConstant(BatFile), '', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+  if (not Ok) or (ResultCode <> 0) then
+  begin
+    MsgBox(
+      'INSTALLATION FAILED' + #13#10 + #13#10 +
+      FailReason + #13#10 + #13#10 +
+      'Script          : ' + BatFile + #13#10 +
+      'Exit code       : ' + IntToStr(ResultCode) + #13#10 + #13#10 +
+      'The Balaji FeeHub Server has NOT been installed correctly.' + #13#10 +
+      'Windows services have NOT been registered.' + #13#10 + #13#10 +
+      'Review the console window that just closed for the exact failing step,' + #13#10 +
+      'then run this installer again after fixing the underlying issue.',
+      mbCriticalError, MB_OK);
+    Abort;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  HealthCode: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    { Stage 1 - preflight (blocking) }
+    RunStageOrAbort(
+      '{app}\01-install-main-server\preflight.bat',
+      'Running preflight checks...',
+      'Preflight reported one or more BLOCKING errors (Python 3.11 x64 missing, disk space, admin rights, etc.).');
+
+    { Stage 2 - full 14-stage install (blocking) - this is where a broken offline }
+    { wheelhouse, MSI failure, or NSSM error surfaces as a non-zero exit code.    }
+    RunStageOrAbort(
+      '{app}\01-install-main-server\install-main-server.bat',
+      'Installing MongoDB, backend, frontend and Windows services (~5-10 minutes)...',
+      'The main installer script reported a fatal error. Common causes:' + #13#10 +
+      '  - Offline Python wheel bundle is incomplete or ABI-mismatched' + #13#10 +
+      '  - MongoDB MSI failed to install' + #13#10 +
+      '  - A Windows service could not be registered');
+
+    { Stage 3 - health check (non-blocking; service may still be initializing).   }
+    { The braces inside %{http_code} are inside a Pascal string, so Inno's        }
+    { preprocessor does not touch them - cmd receives them literally.             }
+    WizardForm.StatusLabel.Caption := 'Verifying backend health...';
+    Exec('cmd.exe',
+         '/c curl -s -o nul -w %{http_code} http://127.0.0.1:8001/api/version | findstr 200',
+         '', SW_HIDE, ewWaitUntilTerminated, HealthCode);
+    if HealthCode <> 0 then
+      MsgBox(
+        'The backend has not yet returned HTTP 200.' + #13#10 + #13#10 +
+        'This is usually because MongoDB is still initializing its data directory.' + #13#10 +
+        'Wait 30 seconds, then open http://127.0.0.1:3000 - the site should load.' + #13#10 + #13#10 +
+        'If it still does not load, open services.msc and check:' + #13#10 +
+        '  - BalajiFeeHub-Mongo' + #13#10 +
+        '  - BalajiFeeHub-Backend' + #13#10 +
+        '  - BalajiFeeHub-Frontend',
+        mbInformation, MB_OK);
+  end;
 end;
 
 function InitializeSetup(): Boolean;

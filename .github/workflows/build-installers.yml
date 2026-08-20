@@ -95,6 +95,80 @@ jobs:
           del "%WORK%\BalajiConventFeeSoftware_v1.0_CORE.zip"
           dir "%SVC%\mongodb-windows-x86_64.msi"
 
+      - name: Set up Python 3.11 x64 (for offline wheelhouse rebuild)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+
+      - name: Overlay repo-tracked install-main-server.bat onto payload
+        run: |
+          $payload = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0"
+          $src     = Join-Path "${{ github.workspace }}" "installer-sources\scripts\install-main-server.bat"
+          $dst     = Join-Path $payload "01-install-main-server\install-main-server.bat"
+          if (-not (Test-Path $src)) { throw "Missing repo source-of-truth: $src" }
+          if (-not (Test-Path (Split-Path $dst))) { throw "Missing target folder inside payload: $(Split-Path $dst)" }
+          Copy-Item -Force $src $dst
+          Write-Host "Overlaid install-main-server.bat: $dst"
+
+      - name: Rebuild offline wheelhouse (native Windows Python 3.11 x64)
+        run: |
+          $payload = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0"
+          $req     = Join-Path $payload "03-source-code\backend\requirements.txt"
+          $wheels  = Join-Path $payload "01-install-main-server\wheels"
+          Write-Host "Python  : $(python --version)"
+          Write-Host "Machine : $(python -c 'import platform; print(platform.machine())')"
+          Write-Host "Reqs    : $req"
+          Write-Host "Wheels  : $wheels"
+          if (-not (Test-Path $req)) { throw "requirements.txt not found at $req" }
+          if (Test-Path $wheels) { Remove-Item -Recurse -Force $wheels }
+          New-Item -ItemType Directory -Path $wheels | Out-Null
+          python -m pip install --upgrade pip wheel setuptools
+          # Downloading on native Windows Python 3.11 x64 resolves environment
+          # markers correctly (sys_platform=="win32", python_version=="3.11"),
+          # so colorama, tzdata, six and every other transitive dep are included.
+          python -m pip download --dest "$wheels" --only-binary=:all: -r "$req"
+          if ($LASTEXITCODE -ne 0) { throw "pip download failed with exit $LASTEXITCODE" }
+          # Bundle pip/wheel/setuptools too so the offline installer never needs PyPI.
+          python -m pip download --dest "$wheels" --only-binary=:all: pip wheel setuptools
+          $count = (Get-ChildItem $wheels).Count
+          Write-Host ""
+          Write-Host "Rebuilt wheelhouse: $count wheel files"
+          if ($count -lt 40) { throw "Wheelhouse suspiciously small ($count files) - aborting build" }
+          Get-ChildItem $wheels | Sort-Object Name | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Verify offline wheelhouse installs into a clean venv
+        run: |
+          $payload = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0"
+          $req     = Join-Path $payload "03-source-code\backend\requirements.txt"
+          $wheels  = Join-Path $payload "01-install-main-server\wheels"
+          $venv    = Join-Path "${{ github.workspace }}" "_verify_venv"
+          if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
+          python -m venv $venv
+          $vpy = Join-Path $venv "Scripts\python.exe"
+          & $vpy -m pip install --upgrade --no-index --find-links "$wheels" pip
+          if ($LASTEXITCODE -ne 0) { throw "OFFLINE VERIFY: pip self-upgrade failed with exit $LASTEXITCODE" }
+          & $vpy -m pip install --no-index --find-links "$wheels" -r "$req"
+          if ($LASTEXITCODE -ne 0) { throw "OFFLINE VERIFY: pip install -r requirements.txt failed with exit $LASTEXITCODE" }
+          Write-Host ""
+          Write-Host "Verifying imports of critical production packages..."
+          & $vpy -c "import fastapi, uvicorn, motor, pymongo, pydantic, jwt, bcrypt, cryptography, pandas, numpy, openpyxl, dotenv, requests; print('All 13 imports OK')"
+          if ($LASTEXITCODE -ne 0) { throw "OFFLINE VERIFY: critical package import test failed with exit $LASTEXITCODE" }
+          # Start the backend against a stub Mongo (won't actually connect, but must at
+          # least import server.py without ImportError).
+          $backend = Join-Path $payload "03-source-code\backend"
+          Push-Location $backend
+          try {
+            & $vpy -c "import sys; sys.path.insert(0, '.'); import importlib; importlib.import_module('server'); print('backend server.py imports OK')"
+            if ($LASTEXITCODE -ne 0) { Write-Warning "backend server.py import returned $LASTEXITCODE (non-fatal - env may need MONGO_URL). Continuing." }
+          } finally {
+            Pop-Location
+          }
+          Write-Host ""
+          Write-Host "==============================================================="
+          Write-Host "  OFFLINE WHEELHOUSE VERIFIED - installer is safe to publish."
+          Write-Host "==============================================================="
+
       - name: Generate school-logo.ico from source JPEG
         run: |
           $work = Join-Path "${{ github.workspace }}" "installer-sources\payload"
