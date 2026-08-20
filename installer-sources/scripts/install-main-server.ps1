@@ -309,12 +309,28 @@ function Stage-CopyAndConfig {
     else { Die 50 'Copy' 'Prebuilt frontend not found in payload' 'Re-download the Server installer.' }
     if (Test-Path "$SRC\version.json") { Copy-Item -Force "$SRC\version.json" "$APP_ROOT\version.json" }
 
-    LogStep 'Stage 7/14: Python venv + offline wheels'
-    if (-not (Test-Path "$VENV\Scripts\python.exe")) {
+    LogStep 'Stage 7/14: Python venv + offline wheels  ->  detect / reuse / repair / create'
+    $venvPy = "$VENV\Scripts\python.exe"
+    $venvBroken = $false
+    if (Test-Path $venvPy) {
+        # Detect existing venv - verify it actually works (python + pip both functional)
+        & $venvPy -c "import sys, pip" 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            LogWarn 'Existing venv is broken (python/pip do not import) - REPAIRING by recreation'
+            $venvBroken = $true
+        } else {
+            LogOK 'Existing Python venv is valid  ->  REUSING'
+        }
+    }
+    if ($venvBroken) {
+        Remove-Item -Recurse -Force $VENV -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path $venvPy)) {
+        LogInfo 'Creating fresh Python venv...'
         & python -m venv $VENV
         if ($LASTEXITCODE -ne 0) { Die 51 'Python venv' "venv creation failed with exit $LASTEXITCODE" 'Check that Python 3.11 x64 is on PATH and try again.' }
+        LogOK 'Python venv CREATED'
     }
-    $venvPy = "$VENV\Scripts\python.exe"
     & $venvPy -m pip install --upgrade --no-index --find-links $WHEELS pip 2>&1 | Out-Null
     & $venvPy -m pip install --no-index --find-links $WHEELS -r "$APP_BACKEND\requirements.txt" 2>&1 | Tee-Object "$APP_LOGS\pip-install.log" | Out-Null
     if ($LASTEXITCODE -ne 0) { Die 52 'Offline pip' "pip install returned $LASTEXITCODE - offline wheelhouse incomplete" "See $APP_LOGS\pip-install.log" }

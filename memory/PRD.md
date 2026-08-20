@@ -23,6 +23,12 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-26 Final production pass (this session)
+- **Python venv completes the detect/reuse/repair/create pattern**: Stage 7 now runs `python -c "import sys, pip"` against the existing venv; if it fails, the venv is deleted and recreated. Otherwise reused. Matches the pattern already applied to MongoDB, Backend service, Frontend service, and firewall rules.
+- **Every required component in the installer now follows Detect -> Reuse-if-correct / Repair-if-drifted / Create-if-missing**, is idempotent (safe to re-run), and reports its action explicitly (`REUSED / REPAIRED / CREATED`) in `C:\balaji-fee\logs\installation-report.txt`.
+- **End-to-end acceptance chain** enforced before `INSTALLATION SUCCESSFUL`: MongoDB ping -> `/api/version` -> `/api/auth/me` returns 401/403 -> frontend HTML contains React root/Balaji branding -> `BalajiFeeHub.exe` actually launches and stays alive 12s with a window title matching `*Balaji*` -> all services `AUTO_START`.
+- **Nothing left as a "verify only" step**: MongoDB, Python venv, Backend service, Frontend service, Firewall rules, .env files, MongoDB config, Windows services, and the desktop app are all detect+manage, never assume.
+
 ### 2026-02-25 Additions — End-to-end user journey verification (this session)
 - **Stage 13 extended with real user-journey acceptance tests**. `INSTALLATION SUCCESSFUL` now requires the ENTIRE chain to work end-to-end, not just individual components:
   1. **MongoDB -> DB layer**: `pymongo.ping()` succeeds (auto-repair retry if not).
