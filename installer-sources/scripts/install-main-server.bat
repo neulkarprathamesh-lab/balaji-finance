@@ -395,18 +395,20 @@ if !CHECK_FAILED! neq 0 (
     exit /b 12
 )
 
-REM ---------- Desktop shortcut ----------
-echo [13/14] Creating desktop shortcut (Chrome/Edge --app mode -- looks like a Windows app) ...
-set BROWSER_EXE=
-if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set BROWSER_EXE=%ProgramFiles%\Google\Chrome\Application\chrome.exe
-if not defined BROWSER_EXE if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set BROWSER_EXE=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe
-if not defined BROWSER_EXE if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set BROWSER_EXE=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe
-if not defined BROWSER_EXE if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set BROWSER_EXE=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe
-if defined BROWSER_EXE (
-    powershell -NoProfile -Command "$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut([Environment]::GetFolderPath('CommonDesktopDirectory')+'\Balaji FeeHub.lnk'); $s.TargetPath='%BROWSER_EXE%'; $s.Arguments='--app=http://%LAN_IP%:3000 --new-window --disable-features=TranslateUI'; $s.IconLocation='%APP_FRONTEND%\build\school-logo.jpeg,0'; $s.Description='Balaji FeeHub'; $s.Save()" >nul 2>&1
-) else (
-    powershell -NoProfile -Command "$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut([Environment]::GetFolderPath('CommonDesktopDirectory')+'\Balaji FeeHub.lnk'); $s.TargetPath='http://%LAN_IP%:3000'; $s.Save()" >nul 2>&1
+REM ---------- Verify Electron desktop app is bundled ----------
+echo [13/14] Verifying Balaji FeeHub desktop application ...
+set DESKTOP_EXE=%~dp0..\04-desktop\BalajiFeeHub.exe
+if not exist "%DESKTOP_EXE%" (
+    echo.
+    echo ================================================================
+    echo   INSTALLATION FAILED  --  BalajiFeeHub.exe not found in the payload.
+    echo   Expected: %DESKTOP_EXE%
+    echo   The desktop application was not packaged into this installer.
+    echo   Re-download the Server installer and try again.
+    echo ================================================================
+    exit /b 13
 )
+echo         OK    Desktop app located at %DESKTOP_EXE%
 
 REM ---------- Autostart on reboot ----------
 echo [14/14] Verifying services set to auto-start on boot ...

@@ -1,0 +1,52 @@
+{
+  "name": "balaji-feehub-desktop",
+  "version": "1.0.0",
+  "description": "Balaji FeeHub - native desktop application (Electron shell around the LAN-hosted app)",
+  "author": {
+    "name": "Balaji Convent & Junior College",
+    "email": "admin@balajiconvent.in"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64 --dir"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "in.balajiconvent.feehub",
+    "productName": "Balaji FeeHub",
+    "executableName": "BalajiFeeHub",
+    "copyright": "Copyright (c) 2026 Balaji Convent & Junior College, Butibori, Nagpur",
+    "directories": {
+      "output": "dist",
+      "buildResources": "."
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "icon.ico",
+      "package.json"
+    ],
+    "asar": true,
+    "compression": "maximum",
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icon.ico",
+      "artifactName": "BalajiFeeHub-${version}-win.${ext}"
+    }
+  }
+}

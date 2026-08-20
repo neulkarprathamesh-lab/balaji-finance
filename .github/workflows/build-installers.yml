@@ -109,6 +109,7 @@ jobs:
           $overlays = @(
             @{ src = "install-main-server.bat"; dst = "01-install-main-server\install-main-server.bat" },
             @{ src = "repair-installation.bat"; dst = "01-install-main-server\repair-installation.bat" },
+            @{ src = "backup-now.bat";          dst = "01-install-main-server\backup-now.bat"          },
             @{ src = "install-client-pc.bat";   dst = "02-install-client-pc\install-client-pc.bat"     }
           )
           foreach ($o in $overlays) {
@@ -119,6 +120,18 @@ jobs:
             Copy-Item -Force $s $d
             Write-Host "Overlaid $($o.src) -> $d"
           }
+
+      - name: Set up Node 20 (for Electron desktop shell build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Electron dependencies
+        working-directory: ${{ github.workspace }}/desktop
+        shell: cmd
+        run: |
+          call yarn install --frozen-lockfile
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
       - name: Rebuild offline wheelhouse (native Windows Python 3.11 x64)
         run: |
@@ -200,6 +213,38 @@ jobs:
           if (-not (Test-Path $ico)) { throw "Failed to generate school-logo.ico" }
           Write-Host "Generated ICO size: $((Get-Item $ico).Length) bytes"
 
+      - name: Copy generated ICO into desktop/ for Electron build
+        run: |
+          $ico = Join-Path "${{ github.workspace }}" "installer-sources\school-logo.ico"
+          $dst = Join-Path "${{ github.workspace }}" "desktop\icon.ico"
+          Copy-Item -Force $ico $dst
+          Write-Host "Copied icon.ico ($((Get-Item $dst).Length) bytes) into desktop\"
+
+      - name: Build Electron desktop app (win-unpacked)
+        working-directory: ${{ github.workspace }}/desktop
+        shell: cmd
+        run: |
+          call yarn build
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
+      - name: Verify Electron build output + overlay into payload\04-desktop\
+        run: |
+          $src = Join-Path "${{ github.workspace }}" "desktop\dist\win-unpacked"
+          $exe = Join-Path $src "BalajiFeeHub.exe"
+          if (-not (Test-Path $exe)) { throw "Electron build did not produce BalajiFeeHub.exe at $exe" }
+          $sz  = (Get-Item $exe).Length
+          Write-Host "BalajiFeeHub.exe built successfully ($([math]::Round($sz/1MB,1)) MB)"
+
+          $payload = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0"
+          $dst = Join-Path $payload "04-desktop"
+          if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+          New-Item -ItemType Directory -Path $dst | Out-Null
+          Copy-Item -Recurse -Force "$src\*" $dst
+          $overlayExe = Join-Path $dst "BalajiFeeHub.exe"
+          if (-not (Test-Path $overlayExe)) { throw "Overlay failed: $overlayExe missing after copy" }
+          $totalSize = ((Get-ChildItem $dst -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB)
+          Write-Host "Overlaid Electron app into payload\04-desktop  ($([math]::Round($totalSize,1)) MB total)"
+
       - name: Validate compile prerequisites (paths, payload, icon)
         run: |
           $ws     = "${{ github.workspace }}"
@@ -207,19 +252,22 @@ jobs:
           $cliIss = Join-Path $ws "installer-sources\BalajiFeeHub-Client-Setup.iss"
           $ico    = Join-Path $ws "installer-sources\school-logo.ico"
           $pldSrv = Join-Path $ws "installer-sources\payload\BalajiConventFeeSoftware-v1.0"
-          $pldCli = Join-Path $ws "installer-sources\payload\BalajiConventFeeSoftware-v1.0\02-install-client-pc"
+          $pldCli = Join-Path $ws "installer-sources\payload\BalajiConventFeeSoftware-v1.0\04-desktop"
+          $pldExe = Join-Path $pldCli "BalajiFeeHub.exe"
           $iscc   = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          Write-Host "Test-Path server iss   : $(Test-Path $srvIss)"
-          Write-Host "Test-Path client iss   : $(Test-Path $cliIss)"
-          Write-Host "Test-Path school-logo  : $(Test-Path $ico)"
-          Write-Host "Test-Path payload/full : $(Test-Path $pldSrv)"
-          Write-Host "Test-Path payload/cli  : $(Test-Path $pldCli)"
-          Write-Host "Test-Path ISCC.exe     : $(Test-Path $iscc)"
+          Write-Host "Test-Path server iss     : $(Test-Path $srvIss)"
+          Write-Host "Test-Path client iss     : $(Test-Path $cliIss)"
+          Write-Host "Test-Path school-logo    : $(Test-Path $ico)"
+          Write-Host "Test-Path payload/full   : $(Test-Path $pldSrv)"
+          Write-Host "Test-Path payload/desktp : $(Test-Path $pldCli)"
+          Write-Host "Test-Path desktop exe    : $(Test-Path $pldExe)"
+          Write-Host "Test-Path ISCC.exe       : $(Test-Path $iscc)"
           if (-not (Test-Path $srvIss)) { throw "Missing $srvIss" }
           if (-not (Test-Path $cliIss)) { throw "Missing $cliIss" }
           if (-not (Test-Path $ico))    { throw "Missing $ico" }
           if (-not (Test-Path $pldSrv)) { throw "Missing $pldSrv" }
-          if (-not (Test-Path $pldCli)) { throw "Missing $pldCli" }
+          if (-not (Test-Path $pldCli)) { throw "Missing $pldCli - Electron overlay step must run first" }
+          if (-not (Test-Path $pldExe)) { throw "Missing $pldExe - Electron build failed to produce BalajiFeeHub.exe" }
           if (-not (Test-Path $iscc))   { throw "Missing $iscc" }
           Write-Host ""
           Write-Host "Contents of payload/BalajiConventFeeSoftware-v1.0 (top level):"

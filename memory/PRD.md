@@ -23,6 +23,59 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-21 Additions — Native Electron desktop shell (this session)
+- **Electron desktop application** (`/app/desktop/`) — real `BalajiFeeHub.exe`, not a Chrome-app hack. Single codebase serves both Server and Client PCs:
+  - `main.js` auto-detects: probes `127.0.0.1:8001` first (Main Server PC), falls back to saved IP in `%APPDATA%\BalajiFeeHub\config.json`, then a parallel `/24` LAN scan (254 addresses in parallel per subnet). Saves successful IP so the user never re-enters it.
+  - `renderer/connect.html` shows a professional connect screen with school branding, live progress line during discovery, and a manual `Main Server IP + Connect` fallback if auto-discovery fails.
+  - Application menu: File (Reload / Change Main Server / Exit), View (fullscreen / zoom), Help (About).
+  - `did-fail-load` handler shows the connect screen again if the Main Server goes offline mid-session.
+  - Single-instance lock so re-launching just focuses the existing window.
+  - External links opened via `shell.openExternal` — the app window is a chromeless Windows app, no browser tabs/address bar.
+  - Icon = school-logo.ico (auto-generated in CI from the JPEG).
+- **electron-builder config**: target `dir` (win-unpacked), asar-packed, x64 only. Output copied by the CI into `payload/04-desktop/` and picked up by both `.iss` installers.
+- **Inno Setup rewired**:
+  - Server `.iss`: postinstall now launches `{app}\04-desktop\BalajiFeeHub.exe` (no browser). Desktop + Start Menu shortcuts point to the Electron EXE with its embedded icon. Start Menu now has: Balaji FeeHub / Repair / Backup Now / Uninstall.
+  - Client `.iss`: full rewrite. Installs Electron unpacked folder to `Program Files\BalajiFeeHub\`, creates Desktop + Start Menu shortcuts to `BalajiFeeHub.exe`, launches on post-install. No Python, no MongoDB, no Node, no Chrome, no WebView2 required on the client.
+  - Fixed the Pascal syntax bug (`{ ... %{http_code} ... }` was closing the comment early → "Unknown identifier 'are'"): all Pascal block comments containing curly braces converted to `//` line comments.
+- **`install-main-server.bat` step 13 rewritten**: no longer creates Chrome `--app` shortcut. Instead verifies `BalajiFeeHub.exe` exists in the payload; hard-fails install with clear banner if it's missing.
+- **`install-client-pc.bat`**: simplified to informational output — Electron handles all discovery/connection now.
+- **`backup-now.bat`**: new manual-backup script wired to the Start Menu `Backup Now` entry. Creates timestamped `mongodump` snapshot into `C:\balaji-fee\backups\manual-YYYY-MM-DD_HH-MM-SS\`.
+- **GitHub Actions workflow additions**:
+  - `actions/setup-node@v4` with Node 20
+  - `yarn install --frozen-lockfile` in `/desktop/`
+  - Copy generated `school-logo.ico` into `desktop/icon.ico` before build
+  - `yarn build` → `desktop/dist/win-unpacked/BalajiFeeHub.exe`
+  - Overlay verified output into `payload/04-desktop/` — throws hard if `BalajiFeeHub.exe` is missing
+  - Compile-prereq validation now also checks the desktop EXE exists before ISCC runs
+- **All previous production-hardening kept**: offline wheelhouse rebuild + verify, existing-install auto-backup, comprehensive post-install verification (service exists → RUNNING → port LISTENING → HTTP 200 → Mongo ping → LAN IP), CI env vars for import test, hard fail on any missing production import.
+
+### Architecture (final)
+```
+                   INTERNET (download/updates only)
+                          |
+                      SCHOOL LAN
+                          |
+                  +-------v-------+
+                  |  MAIN SERVER  |   BalajiFeeHub-Server-Setup.exe
+                  |               |   . MongoDB (127.0.0.1 only)
+                  |  BalajiFeeHub |   . Backend (FastAPI, uvicorn)
+                  |     .exe      |   . Frontend (React, port 3000)
+                  +-------+-------+   . Electron shell auto-connects local
+                          |
+             +------------+------------+
+             |            |            |
+             v            v            v
+         PC 01        PC 02        PC 03            BalajiFeeHub-Client-Setup.exe
+      BalajiFeeHub  BalajiFeeHub BalajiFeeHub       . Electron shell only
+         .exe          .exe         .exe            . Auto-discovers Main Server
+                                                    . Saves IP in %APPDATA%
+```
+
+### What still needs a real Windows machine (out of Linux CI scope)
+- Reboot test: services auto-recover, `BalajiFeeHub.exe` opens without any manual action
+- Cross-LAN client test: second PC on same subnet auto-discovers Main Server, saves IP, reconnects on next launch
+- Internet-off test: full flow (login → student → receipt → print) works over LAN only
+
 ### 2026-02-20 Additions — Production-hardening pass (this session)
 - **Offline wheelhouse rebuilt natively on Windows in CI** — GHA workflow now sets up Python 3.11 x64 on `windows-latest`, wipes and re-downloads the wheelhouse from `payload/03-source-code/backend/requirements.txt`. Because it runs on native Windows Python, environment markers (`sys_platform == "win32"`, `python_version == "3.11"`) are evaluated correctly and previously missing transitive deps (`colorama`, `tzdata`, `six`, `certifi`, etc.) are now bundled automatically. Wheelhouse is verified end-to-end by creating a clean venv, running `pip install --no-index --find-links wheels -r requirements.txt`, and importing 13 critical packages. Build fails red if verification fails, so no incomplete bundle can ever ship.
 - **install-main-server.bat — comprehensive rewrite** (repo source-of-truth at `installer-sources/scripts/`, overlaid onto CORE.zip in CI):

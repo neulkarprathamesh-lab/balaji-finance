@@ -49,7 +49,7 @@ ArchitecturesAllowed=x64
 PrivilegesRequired=admin
 MinVersion=10.0
 UninstallDisplayName={#AppName}
-UninstallDisplayIcon={app}\03-source-code\frontend\public\school-logo.jpeg
+UninstallDisplayIcon={app}\04-desktop\BalajiFeeHub.exe
 SetupIconFile=.\school-logo.ico
 WizardStyle=modern
 CloseApplications=force
@@ -80,17 +80,19 @@ Name: "{app}\mongodb\data";
 Name: "{app}\mongodb\logs";
 
 [Icons]
-Name: "{commondesktop}\Balaji FeeHub";              Filename: "http://127.0.0.1:3000"; IconFilename: "{app}\03-source-code\frontend\public\school-logo.jpeg"
-Name: "{group}\Balaji FeeHub — Administration";     Filename: "http://127.0.0.1:3000/admin"; IconFilename: "{app}\03-source-code\frontend\public\school-logo.jpeg"
-Name: "{group}\Repair Balaji FeeHub Server";        Filename: "{app}\01-install-main-server\repair-installation.bat"
-Name: "{group}\Uninstall Balaji FeeHub Server";     Filename: "{uninstallexe}"
+Name: "{commondesktop}\Balaji FeeHub";              Filename: "{app}\04-desktop\BalajiFeeHub.exe"; IconFilename: "{app}\04-desktop\BalajiFeeHub.exe"; WorkingDir: "{app}\04-desktop"
+Name: "{group}\Balaji FeeHub";                      Filename: "{app}\04-desktop\BalajiFeeHub.exe"; IconFilename: "{app}\04-desktop\BalajiFeeHub.exe"; WorkingDir: "{app}\04-desktop"
+Name: "{group}\Repair";                             Filename: "{app}\01-install-main-server\repair-installation.bat"
+Name: "{group}\Backup Now";                         Filename: "{app}\01-install-main-server\backup-now.bat"
+Name: "{group}\Uninstall Balaji FeeHub";            Filename: "{uninstallexe}"
 
 [Run]
 ; The 14-stage install is orchestrated from [Code]::CurStepChanged so we can
 ; capture the batch script's exit code and abort with a clear failure message
 ; instead of silently continuing after a broken offline wheelhouse or a failed
-; MongoDB MSI install. Only the post-install browser launch stays here.
-Filename: "http://127.0.0.1:3000"; Flags: postinstall shellexec skipifsilent
+; MongoDB MSI install. Only launching the native Balaji FeeHub.exe stays here
+; -- no browser is ever opened; the desktop app is the user interface.
+Filename: "{app}\04-desktop\BalajiFeeHub.exe"; WorkingDir: "{app}\04-desktop"; Flags: postinstall nowait skipifsilent; Description: "Launch Balaji FeeHub"
 
 [UninstallRun]
 Filename: "{app}\01-install-main-server\uninstall.bat"; Flags: runhidden waituntilterminated
@@ -125,14 +127,14 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    { Stage 1 - preflight (blocking) }
+    // Stage 1 - preflight (blocking)
     RunStageOrAbort(
       '{app}\01-install-main-server\preflight.bat',
       'Running preflight checks...',
       'Preflight reported one or more BLOCKING errors (Python 3.11 x64 missing, disk space, admin rights, etc.).');
 
-    { Stage 2 - full 14-stage install (blocking) - this is where a broken offline }
-    { wheelhouse, MSI failure, or NSSM error surfaces as a non-zero exit code.    }
+    // Stage 2 - full 14-stage install (blocking) - this is where a broken offline
+    // wheelhouse, MSI failure, or NSSM error surfaces as a non-zero exit code.
     RunStageOrAbort(
       '{app}\01-install-main-server\install-main-server.bat',
       'Installing MongoDB, backend, frontend and Windows services (~5-10 minutes)...',
@@ -141,9 +143,9 @@ begin
       '  - MongoDB MSI failed to install' + #13#10 +
       '  - A Windows service could not be registered');
 
-    { Stage 3 - health check (non-blocking; service may still be initializing).   }
-    { The braces inside %{http_code} are inside a Pascal string, so Inno's        }
-    { preprocessor does not touch them - cmd receives them literally.             }
+    // Stage 3 - health check (non-blocking; service may still be initializing).
+    // The braces inside %{http_code} are inside a Pascal string literal below,
+    // so Inno's preprocessor does not touch them - cmd receives them literally.
     WizardForm.StatusLabel.Caption := 'Verifying backend health...';
     Exec('cmd.exe',
          '/c curl -s -o nul -w %{http_code} http://127.0.0.1:8001/api/version | findstr 200',

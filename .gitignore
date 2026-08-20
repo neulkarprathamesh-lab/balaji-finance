@@ -101,3 +101,4 @@ frontend/public/downloads/mongodb-windows-x86_64.msi.002
 frontend/public/downloads/mongodb-windows-x86_64.msi.001
 dist/mongodb-windows-x86_64.msi.002
 dist/mongodb-windows-x86_64.msi.001
+desktop/node_modules/electron/dist/electron

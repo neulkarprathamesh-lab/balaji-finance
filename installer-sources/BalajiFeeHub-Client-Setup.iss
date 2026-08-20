@@ -1,18 +1,13 @@
 ; ===================================================================
-;  BalajiFeeHub-Client-Setup.iss   —  Inno Setup 6 source
-;  Compiles into  BalajiFeeHub-Client-Setup.exe   (~150 KB)
+;  BalajiFeeHub-Client-Setup.iss   --  Inno Setup 6 source
+;  Compiles into  BalajiFeeHub-Client-Setup.exe
 ;
-;  Client PCs need only Windows 10/11 64-bit + Chrome or Edge.
-;  No Python, Node, MongoDB, wheels or backend code is installed.
-;  Runs install-client-pc.bat which:
-;    • Detects Chrome/Edge
-;    • Auto-discovers the Main Server on the LAN (10-second parallel scan)
-;    • Manual-IP fallback with verification
-;    • Creates Desktop + Start Menu shortcuts
-;    • Opens the app
-;
-;  Compile the same way:
-;    & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" BalajiFeeHub-Client-Setup.iss
+;  Installs the native Electron desktop shell (BalajiFeeHub.exe) into
+;  Program Files\BalajiFeeHub. The application auto-discovers the Main
+;  Server on the school LAN and saves the successful IP under
+;  %APPDATA%\BalajiFeeHub\config.json so the user never has to type it
+;  again. No Python, no MongoDB, no Node, no Chrome, no WebView2 is
+;  required on the client PC -- Electron ships everything it needs.
 ; ===================================================================
 
 #define AppName            "Balaji FeeHub"
@@ -36,18 +31,16 @@ ArchitecturesAllowed=x64
 PrivilegesRequired=admin
 MinVersion=10.0
 UninstallDisplayName={#AppName}
+UninstallDisplayIcon={app}\BalajiFeeHub.exe
 SetupIconFile=.\school-logo.ico
 WizardStyle=modern
 
 [Files]
-Source: "payload\BalajiConventFeeSoftware-v1.0\02-install-client-pc\*";        DestDir: "{app}"; Flags: recursesubdirs ignoreversion
-Source: "payload\BalajiConventFeeSoftware-v1.0\03-source-code\frontend\public\school-logo.jpeg"; DestDir: "{app}"; Flags: ignoreversion
+Source: "payload\BalajiConventFeeSoftware-v1.0\04-desktop\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-; The final shortcut targets are created by install-client-pc.bat once the server has been discovered.
+Name: "{commondesktop}\Balaji FeeHub"; Filename: "{app}\BalajiFeeHub.exe"; IconFilename: "{app}\BalajiFeeHub.exe"; WorkingDir: "{app}"
+Name: "{autoprograms}\Balaji FeeHub"; Filename: "{app}\BalajiFeeHub.exe"; IconFilename: "{app}\BalajiFeeHub.exe"; WorkingDir: "{app}"
 
 [Run]
-Filename: "{app}\install-client-pc.bat"; StatusMsg: "Discovering Balaji FeeHub Main Server on the LAN..."; Flags: waituntilterminated
-
-[UninstallRun]
-Filename: "{app}\uninstall-client-pc.bat"; Flags: runhidden waituntilterminated
+Filename: "{app}\BalajiFeeHub.exe"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent; Description: "Launch Balaji FeeHub"
