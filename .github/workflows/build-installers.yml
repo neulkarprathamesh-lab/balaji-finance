@@ -101,15 +101,24 @@ jobs:
           python-version: '3.11'
           architecture: 'x64'
 
-      - name: Overlay repo-tracked install-main-server.bat onto payload
+      - name: Overlay repo-tracked installer scripts onto payload
         run: |
           $payload = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0"
-          $src     = Join-Path "${{ github.workspace }}" "installer-sources\scripts\install-main-server.bat"
-          $dst     = Join-Path $payload "01-install-main-server\install-main-server.bat"
-          if (-not (Test-Path $src)) { throw "Missing repo source-of-truth: $src" }
-          if (-not (Test-Path (Split-Path $dst))) { throw "Missing target folder inside payload: $(Split-Path $dst)" }
-          Copy-Item -Force $src $dst
-          Write-Host "Overlaid install-main-server.bat: $dst"
+          $srcRoot = Join-Path "${{ github.workspace }}" "installer-sources\scripts"
+          # Map source of truth -> destination inside the extracted payload
+          $overlays = @(
+            @{ src = "install-main-server.bat"; dst = "01-install-main-server\install-main-server.bat" },
+            @{ src = "repair-installation.bat"; dst = "01-install-main-server\repair-installation.bat" },
+            @{ src = "install-client-pc.bat";   dst = "02-install-client-pc\install-client-pc.bat"     }
+          )
+          foreach ($o in $overlays) {
+            $s = Join-Path $srcRoot $o.src
+            $d = Join-Path $payload $o.dst
+            if (-not (Test-Path $s)) { throw "Missing repo source-of-truth: $s" }
+            if (-not (Test-Path (Split-Path $d))) { throw "Missing target folder inside payload: $(Split-Path $d)" }
+            Copy-Item -Force $s $d
+            Write-Host "Overlaid $($o.src) -> $d"
+          }
 
       - name: Rebuild offline wheelhouse (native Windows Python 3.11 x64)
         run: |

@@ -3,10 +3,15 @@ REM ================================================================
 REM  Balaji FeeHub - Main Server Installer  .  Fully self-contained
 REM  Windows 10/11 64-bit  .  100%% offline after ZIP is extracted
 REM
-REM  This is the repo-tracked source of truth. The GitHub Actions
-REM  workflow overlays this file onto the CORE.zip payload before
-REM  Inno Setup packs the installer, so future stealth-broken
-REM  wheelhouses / silent failures cannot slip through again.
+REM  Repo source of truth. The GitHub Actions workflow overlays this
+REM  file onto the CORE.zip payload before Inno Setup packs the EXE.
+REM
+REM  Contract:
+REM   * NEVER touches an existing production database without a backup
+REM   * NEVER prints "INSTALLATION SUCCESSFUL" unless every service is
+REM     running, every port is listening, and the backend has replied
+REM     with HTTP 200 to a real request from THIS machine.
+REM   * On any hard failure, exits non-zero with a big FAILED banner.
 REM ================================================================
 setlocal EnableExtensions EnableDelayedExpansion
 
@@ -23,6 +28,7 @@ set VENV=%APP_ROOT%\venv
 set SRC=%~dp0..\03-source-code
 set BUNDLE=%~dp0..\05-services
 set WHEELS=%~dp0wheels
+set REPAIR_MODE=0
 
 echo.
 echo ================================================================
@@ -39,8 +45,55 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+REM ---------- Detect existing production installation and back it up ----------
+if exist "%MONGO_DATA%\WiredTiger" (
+    echo.
+    echo ================================================================
+    echo   EXISTING INSTALLATION DETECTED
+    echo ================================================================
+    echo   Data dir : %MONGO_DATA%
+    echo   Backups  : %APP_BACKUPS%
+    echo.
+    echo   The installer will create a FULL backup of the current
+    echo   database and configuration BEFORE any changes are made.
+    echo   Existing data will be PRESERVED - nothing is deleted or reset.
+    echo.
+    choice /C YN /N /M "Continue with in-place repair/update? [Y/N] "
+    if errorlevel 2 (echo Cancelled by user. & exit /b 2)
+
+    mkdir "%APP_BACKUPS%" 2>nul
+    mkdir "%APP_LOGS%"    2>nul
+    for /f "tokens=1-3 delims=/- " %%a in ("%DATE%") do set DPART=%%c-%%b-%%a
+    for /f "tokens=1-3 delims=:." %%a in ("%TIME%") do set TPART=%%a-%%b-%%c
+    set TPART=!TPART: =0!
+    set BKP_DIR=%APP_BACKUPS%\pre-repair-!DPART!_!TPART!
+    mkdir "!BKP_DIR!" 2>nul
+    echo   Creating pre-repair backup at !BKP_DIR! ...
+
+    where mongodump >nul 2>&1
+    if !ERRORLEVEL!==0 (
+        mongodump --host 127.0.0.1:27017 --out "!BKP_DIR!\db" > "%APP_LOGS%\pre-repair-backup.log" 2>&1
+        if !ERRORLEVEL! neq 0 (
+            echo.
+            echo ================================================================
+            echo   INSTALLATION FAILED  --  automatic pre-repair backup failed
+            echo   mongodump returned !ERRORLEVEL!.  See %APP_LOGS%\pre-repair-backup.log
+            echo   Aborting to protect existing production data.
+            echo ================================================================
+            exit /b 90
+        )
+    ) else (
+        echo   WARN  mongodump not on PATH -- copying raw database files as fallback
+        xcopy /E /Y /I /Q "%MONGO_DATA%" "!BKP_DIR!\raw-data" >nul
+    )
+    if exist "%APP_BACKEND%\.env"  copy /Y "%APP_BACKEND%\.env"  "!BKP_DIR!\backend.env.bak"  >nul
+    if exist "%APP_FRONTEND%\.env" copy /Y "%APP_FRONTEND%\.env" "!BKP_DIR!\frontend.env.bak" >nul
+    echo   OK    Pre-repair backup saved to !BKP_DIR!
+    set REPAIR_MODE=1
+    echo.
+)
+
 REM ---------- Create tree ----------
-echo.
 echo [ 1/14] Creating application directories under %APP_ROOT% ...
 mkdir "%APP_ROOT%"        2>nul
 mkdir "%APP_BACKEND%"     2>nul
@@ -53,7 +106,7 @@ mkdir "%MONGO_ROOT%"      2>nul
 mkdir "%MONGO_DATA%"      2>nul
 mkdir "%MONGO_LOGS%"      2>nul
 
-REM ---------- Copy backend + prebuilt frontend ----------
+REM ---------- Copy backend + prebuilt frontend (does not touch existing .env) ----------
 echo [ 2/14] Copying source (backend + prebuilt frontend) ...
 xcopy /E /Y /I /Q "%SRC%\backend"           "%APP_BACKEND%"        >nul
 if exist "%SRC%\frontend\build" (
@@ -173,6 +226,8 @@ if not exist "%APP_BACKEND%\.env" (
         echo ADMIN_EMAIL=admin@balajiconvent.in
         echo ADMIN_PASSWORD=ChangeMeOnFirstLogin@2026
     ) > "%APP_BACKEND%\.env"
+) else (
+    echo         Existing backend/.env preserved (production settings intact).
 )
 
 REM ---------- Detect LAN IP + frontend .env ----------
@@ -190,9 +245,11 @@ if not exist "%APP_FRONTEND%\.env" (
         echo REACT_APP_BACKEND_URL=http://%LAN_IP%:8001
         echo WDS_SOCKET_PORT=443
     ) > "%APP_FRONTEND%\.env"
+) else (
+    echo         Existing frontend/.env preserved.
 )
 
-REM ---------- MongoDB config (127.0.0.1 only) ----------
+REM ---------- MongoDB config (127.0.0.1 only - never exposed to LAN) ----------
 echo [ 8/14] Configuring MongoDB (binds to 127.0.0.1 -- clients never talk to Mongo directly) ...
 (
     echo systemLog:
@@ -214,7 +271,6 @@ netsh advfirewall firewall add rule name="BalajiFeeHub Backend"  dir=in action=a
 netsh advfirewall firewall add rule name="BalajiFeeHub Frontend" dir=in action=allow protocol=TCP localport=3000 >nul
 
 REM ---------- Register services via bundled NSSM ----------
-REM  Services are ONLY registered after the Python venv is proven working above.
 echo [10/14] Registering Windows services with bundled NSSM ...
 call "%~dp0register-services.bat"
 if %ERRORLEVEL% neq 0 (
@@ -232,19 +288,125 @@ net start BalajiFeeHub-Mongo    2>nul & timeout /t 4 /nobreak >nul
 net start BalajiFeeHub-Backend  2>nul & timeout /t 3 /nobreak >nul
 net start BalajiFeeHub-Frontend 2>nul & timeout /t 2 /nobreak >nul
 
-REM ---------- Post-install health check ----------
-echo [12/14] Running post-install health checks ...
-set HEALTH_OK=1
-where curl >nul 2>&1 && (
-    curl -s -o nul -w "backend:%%{http_code} " http://127.0.0.1:8001/api/version
-    curl -s -o nul -w "frontend:%%{http_code}\n" http://127.0.0.1:3000
-    curl -s -o nul -w "%%{http_code}" http://127.0.0.1:8001/api/version | findstr "200" >nul || set HEALTH_OK=0
-    curl -s -o nul -w "%%{http_code}" http://127.0.0.1:3000            | findstr "200" >nul || set HEALTH_OK=0
+REM ---------- Post-install verification (COMPREHENSIVE) ----------
+echo [12/14] Running comprehensive post-install verification ...
+set CHECK_FAILED=0
+set CHECK_REASONS=
+
+echo   --- Service existence ---
+for %%S in (BalajiFeeHub-Mongo BalajiFeeHub-Backend BalajiFeeHub-Frontend) do (
+    sc query "%%S" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo   FAIL  Service %%S does not exist
+        set /a CHECK_FAILED+=1
+        set CHECK_REASONS=!CHECK_REASONS! service-missing:%%S
+    ) else (
+        echo   OK    Service %%S exists
+    )
+)
+
+echo   --- Service state (must be RUNNING) ---
+for %%S in (BalajiFeeHub-Mongo BalajiFeeHub-Backend BalajiFeeHub-Frontend) do (
+    sc query "%%S" | findstr /I "RUNNING" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo   FAIL  Service %%S is NOT running
+        set /a CHECK_FAILED+=1
+        set CHECK_REASONS=!CHECK_REASONS! service-not-running:%%S
+    ) else (
+        echo   OK    Service %%S is RUNNING
+    )
+)
+
+echo   --- Ports listening ---
+for %%P in (27017 8001 3000) do (
+    netstat -an | findstr /R /C:":%%P .*LISTENING" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo   FAIL  Port %%P is NOT listening
+        set /a CHECK_FAILED+=1
+        set CHECK_REASONS=!CHECK_REASONS! port-not-listening:%%P
+    ) else (
+        echo   OK    Port %%P listening
+    )
+)
+
+echo   --- HTTP endpoint checks ---
+where curl >nul 2>&1
+if %ERRORLEVEL%==0 (
+    curl -s -o nul -w "%%{http_code}" http://127.0.0.1:8001/api/version | findstr "200" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo   FAIL  Backend /api/version did NOT return HTTP 200
+        set /a CHECK_FAILED+=1
+        set CHECK_REASONS=!CHECK_REASONS! backend-api-version-not-200
+    ) else (
+        echo   OK    Backend  http://127.0.0.1:8001/api/version = 200
+    )
+    curl -s -o nul -w "%%{http_code}" http://127.0.0.1:3000 | findstr /R /C:"200 302" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo   FAIL  Frontend / did NOT return a success status
+        set /a CHECK_FAILED+=1
+        set CHECK_REASONS=!CHECK_REASONS! frontend-not-ok
+    ) else (
+        echo   OK    Frontend http://127.0.0.1:3000 responded
+    )
+) else (
+    powershell -NoProfile -Command "try { (Invoke-WebRequest 'http://127.0.0.1:8001/api/version' -UseBasicParsing -TimeoutSec 8).StatusCode } catch { 'ERR' }" | findstr "200" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo   FAIL  Backend /api/version did NOT return HTTP 200 (via PowerShell)
+        set /a CHECK_FAILED+=1
+        set CHECK_REASONS=!CHECK_REASONS! backend-api-version-not-200
+    ) else (
+        echo   OK    Backend  http://127.0.0.1:8001/api/version = 200
+    )
+)
+
+echo   --- Backend to MongoDB connectivity ---
+"%VENV%\Scripts\python.exe" -c "from pymongo import MongoClient; MongoClient('mongodb://127.0.0.1:27017', serverSelectionTimeoutMS=8000).admin.command('ping'); print('mongo-ok')" 2>nul | findstr "mongo-ok" >nul
+if !ERRORLEVEL! neq 0 (
+    echo   FAIL  Backend cannot reach MongoDB on 127.0.0.1:27017
+    set /a CHECK_FAILED+=1
+    set CHECK_REASONS=!CHECK_REASONS! mongo-unreachable
+) else (
+    echo   OK    Backend -^> MongoDB ping succeeded
+)
+
+echo   --- LAN reachability ---
+if "%LAN_IP%"=="127.0.0.1" (
+    echo   WARN  Only reachable at 127.0.0.1 (no LAN IP found)
+    set CHECK_REASONS=!CHECK_REASONS! lan-ip-missing
+) else (
+    echo   OK    LAN IP %LAN_IP% -- other PCs on this subnet can reach http://%LAN_IP%:3000
+)
+
+if !CHECK_FAILED! neq 0 (
+    echo.
+    echo ================================================================
+    echo   INSTALLATION FAILED  --  post-install verification failed
+    echo ================================================================
+    echo   Failed checks     : !CHECK_FAILED!
+    echo   Reasons           : !CHECK_REASONS!
+    echo   Logs              : %APP_LOGS%\
+    echo   Services console  : services.msc
+    echo   Health endpoint   : http://127.0.0.1:8001/api/version
+    echo.
+    echo   The Balaji FeeHub Server is NOT ready for production use.
+    echo   Fix the issues above (typically start-order timing or firewall)
+    echo   and re-run this installer to try again.
+    echo ================================================================
+    exit /b 12
 )
 
 REM ---------- Desktop shortcut ----------
-echo [13/14] Creating desktop shortcut ...
-powershell -NoProfile -Command "$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut([Environment]::GetFolderPath('CommonDesktopDirectory')+'\Balaji FeeHub.lnk'); $s.TargetPath='http://%LAN_IP%:3000'; $s.IconLocation='%APP_FRONTEND%\build\school-logo.jpeg,0'; $s.Save()" >nul 2>&1
+echo [13/14] Creating desktop shortcut (Chrome/Edge --app mode -- looks like a Windows app) ...
+set BROWSER_EXE=
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set BROWSER_EXE=%ProgramFiles%\Google\Chrome\Application\chrome.exe
+if not defined BROWSER_EXE if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set BROWSER_EXE=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe
+if not defined BROWSER_EXE if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set BROWSER_EXE=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe
+if not defined BROWSER_EXE if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set BROWSER_EXE=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe
+if defined BROWSER_EXE (
+    powershell -NoProfile -Command "$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut([Environment]::GetFolderPath('CommonDesktopDirectory')+'\Balaji FeeHub.lnk'); $s.TargetPath='%BROWSER_EXE%'; $s.Arguments='--app=http://%LAN_IP%:3000 --new-window --disable-features=TranslateUI'; $s.IconLocation='%APP_FRONTEND%\build\school-logo.jpeg,0'; $s.Description='Balaji FeeHub'; $s.Save()" >nul 2>&1
+) else (
+    powershell -NoProfile -Command "$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut([Environment]::GetFolderPath('CommonDesktopDirectory')+'\Balaji FeeHub.lnk'); $s.TargetPath='http://%LAN_IP%:3000'; $s.Save()" >nul 2>&1
+)
 
 REM ---------- Autostart on reboot ----------
 echo [14/14] Verifying services set to auto-start on boot ...
@@ -254,23 +416,28 @@ sc config BalajiFeeHub-Frontend start= auto >nul 2>&1
 
 echo.
 echo ================================================================
-if "%HEALTH_OK%"=="1" (
-    echo   INSTALLATION SUCCESSFUL
-    echo.
-    echo   Main Server IP : %LAN_IP%
-    echo   Application    : http://%LAN_IP%:3000
-    echo   Backend API    : http://%LAN_IP%:8001/api
-    echo   Data dir       : %MONGO_DATA%
-    echo   Backups dir    : %APP_BACKUPS%
-    echo.
+echo   INSTALLATION SUCCESSFUL  (all verification checks passed)
+echo ================================================================
+echo.
+echo   Main Server IP : %LAN_IP%
+echo   Application    : http://%LAN_IP%:3000
+echo   Backend API    : http://%LAN_IP%:8001/api
+echo   Data dir       : %MONGO_DATA%
+echo   Backups dir    : %APP_BACKUPS%
+echo   Logs           : %APP_LOGS%
+echo.
+if "%REPAIR_MODE%"=="1" (
+    echo   Mode           : REPAIR/UPDATE (existing database preserved)
+    echo   Pre-repair bkp : !BKP_DIR!
+) else (
+    echo   Mode           : FRESH INSTALL
     echo   Default admin  : admin@balajiconvent.in
     echo   Default pass   : ChangeMeOnFirstLogin@2026
     echo   Factory PIN    : 2580  (change immediately from Administration ^> Factory Reset^)
     echo   ^>^>^> CHANGE THE ADMIN PASSWORD IMMEDIATELY AFTER FIRST LOGIN ^<^<^<
-) else (
-    echo   INSTALLATION FAILED  .  one or more services did not return HTTP 200
-    echo   Inspect logs at %APP_LOGS%\  and services in services.msc
-    exit /b 12
 )
+echo.
+echo   RESTART THIS PC to confirm services auto-start on boot,
+echo   then open http://%LAN_IP%:3000 from another PC on the same LAN.
 echo ================================================================
 exit /b 0

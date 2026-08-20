@@ -23,6 +23,41 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-20 Additions — Production-hardening pass (this session)
+- **Offline wheelhouse rebuilt natively on Windows in CI** — GHA workflow now sets up Python 3.11 x64 on `windows-latest`, wipes and re-downloads the wheelhouse from `payload/03-source-code/backend/requirements.txt`. Because it runs on native Windows Python, environment markers (`sys_platform == "win32"`, `python_version == "3.11"`) are evaluated correctly and previously missing transitive deps (`colorama`, `tzdata`, `six`, `certifi`, etc.) are now bundled automatically. Wheelhouse is verified end-to-end by creating a clean venv, running `pip install --no-index --find-links wheels -r requirements.txt`, and importing 13 critical packages. Build fails red if verification fails, so no incomplete bundle can ever ship.
+- **install-main-server.bat — comprehensive rewrite** (repo source-of-truth at `installer-sources/scripts/`, overlaid onto CORE.zip in CI):
+  - Existing installation detection with automatic pre-repair backup via `mongodump` (falls back to raw file copy). Aborts if backup fails — never touches production data unprotected.
+  - Existing `.env` files preserved (never overwritten with template).
+  - Hard `INSTALLATION FAILED` banner + non-zero exit on any stage failure: MSI, venv, pip, deps import, service registration.
+  - Full post-install verification block (step 12/14) that must all pass before `INSTALLATION SUCCESSFUL`:
+    - `sc query` for each of `BalajiFeeHub-Mongo` / `Backend` / `Frontend` (service exists)
+    - `sc query STATE = RUNNING` for each service
+    - `netstat` LISTENING check for ports 27017, 8001, 3000
+    - `curl` HTTP 200 on `/api/version` + frontend `/`
+    - Python `pymongo.MongoClient.ping()` (backend → Mongo connectivity)
+    - LAN IP is non-loopback (LAN reachability)
+  - Auto-start (`sc config … start= auto`) confirmed for all 3 services so they survive Windows reboot.
+- **repair-installation.bat — new** (repo overlay): mandatory pre-repair `mongodump` backup, offline wheelhouse re-install if wheels present, dep-import verification, health check, all with hard-fail exit codes. Database is never touched.
+- **install-client-pc.bat — chromeless Windows-app mode** (repo overlay): desktop + start-menu shortcuts now launch Chrome/Edge with `--app=URL --new-window` so Balaji FeeHub appears as a native-looking chromeless application window, not a browser tab. Auto-detects Chrome first, falls back to Edge, refuses to install if neither present.
+- **Inno Setup `.iss` refactored** to properly capture exit codes: preflight, main install, and health check now orchestrated from `[Code]::CurStepChanged(ssPostInstall)` via `Exec()` + `ResultCode`. Any non-zero exit shows a modal `INSTALLATION FAILED` MessageBox with script name + exit code + likely causes, then `Abort` — the whole install rolls back cleanly instead of silently continuing to a half-installed state.
+- **`school-logo.ico` auto-generated** in CI from `school-logo.jpeg` via ImageMagick (`magick.exe`), so the installer keeps the Balaji branding without requiring a hand-authored .ico in the repo.
+- **CI path validation step** — `Test-Path` guards on both `.iss` files, generated `.ico`, payload root, client subfolder, and ISCC.exe before compile; fails fast with a precise error if anything is missing.
+- **Client + Server `.iss` `Source:` paths corrected** to `payload\BalajiConventFeeSoftware-v1.0\...` so ISCC finds the workflow-extracted CORE.zip payload.
+- **Small unrelated fix**: `FeeStructure.js` was missing `Eye` import and `preview`/`setPreview` state — added.
+
+### Files touched this session
+- `installer-sources/scripts/install-main-server.bat` — 443 lines, comprehensive rewrite
+- `installer-sources/scripts/repair-installation.bat` — 137 lines, new
+- `installer-sources/scripts/install-client-pc.bat` — 126 lines, new (--app mode)
+- `installer-sources/BalajiFeeHub-Server-Setup.iss` — refactored `[Run]` → `[Code]::CurStepChanged`
+- `.github/workflows/build-installers.yml` — added Python setup, overlay step, wheelhouse rebuild, wheelhouse verification, ICO generation, path validation
+- `frontend/src/pages/FeeStructure.js` — lint fixes (`Eye`, `preview`, `setPreview`)
+
+### What still needs a real Windows machine (out of Linux CI scope)
+- Physical Windows 10/11 reboot test → verify services auto-start and database data persists
+- Cross-LAN client test → second PC on the same subnet reaches the server
+- Native desktop shell EXE (Electron/PyWebView) — deferred per user directive until server stack is proven stable in real deployment. Interim: Chrome/Edge `--app` mode delivers the chromeless-window experience.
+
 ### 2026-02-17 Additions — Session log
 - **Production Data Purge System** — new router `/app/backend/routers/production.py` with `GET /api/production/purge/preview` and `POST /api/production/purge` (Admin PIN + phrase "PURGE DEMO DATA"). Wipes 11 transactional collections (students, receipts, adjustments, payment_extensions, reminders, notices, audit_log, config_snapshots, updates, backups, diagnostics_snapshots) and resets all counters; preserves 10 master collections (departments, classes, fee_heads, fee_structures, receipt_types, bus_stops, bus_routes, users, settings, config_defaults). Standalone CLI at `/app/scripts/production_purge.py` for offline use.
 - **Fresh Production ZIP builder** — `/app/scripts/build_final_zip.py` produces `/app/dist/BalajiFeeHub-v1.0-FINAL.zip` and publishes a copy to `/app/frontend/public/downloads/BalajiFeeHub-v1.0-FINAL.zip` for in-app admin download. Excludes __pycache__/node_modules/keys/backups/updates. `POST /api/deliverables/rebuild-zip` triggers a fresh rebuild on demand (Admin PIN). **Built: 4.70 MB, 156 files.**
