@@ -23,6 +23,12 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-22 Additions — Stage 3 MongoDB installer rewrite (this session)
+- Reproduced on real Windows 11: `... was unexpected at this time` at `[3/14]` MongoDB stage. Root causes: (a) `%ERRORLEVEL%` was parse-time-expanded inside parenthesized `if/else` blocks (so post-msiexec check saw stale value), (b) nested `if not exist (…) else (…)` around a `for /f` on the same line confused cmd's parser.
+- Rewrote Stage 3 as linear `GOTO`-labeled blocks with `if errorlevel 1` semantics and `!ERRORLEVEL!` where needed. Zero parenthesized `if (…)` groups in the stage now.
+- New sub-stages: 3.1 detect existing mongod (reuse), 3.2 recombine split MSI, 3.3 locate MSI, 3.4 validate MSI size (>= 50 MB, guards against truncated downloads), 3.5 run msiexec (accepts 0 or 3010), 3.6 locate `mongod.exe`. Each failure path has a unique exit code (31/32/33/34/35) and a precise diagnostic message with common-cause hints.
+- Existing MongoDB installations are now reused (no double-install). msiexec's "success reboot required" (3010) is treated as success.
+
 ### 2026-02-21 Additions — Native Electron desktop shell (this session)
 - **Electron desktop application** (`/app/desktop/`) — real `BalajiFeeHub.exe`, not a Chrome-app hack. Single codebase serves both Server and Client PCs:
   - `main.js` auto-detects: probes `127.0.0.1:8001` first (Main Server PC), falls back to saved IP in `%APPDATA%\BalajiFeeHub\config.json`, then a parallel `/24` LAN scan (254 addresses in parallel per subnet). Saves successful IP so the user never re-enters it.

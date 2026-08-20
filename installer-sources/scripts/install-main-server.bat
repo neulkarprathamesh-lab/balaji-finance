@@ -118,57 +118,133 @@ if exist "%SRC%\frontend\build" (
 if exist "%SRC%\scripts" xcopy /E /Y /I /Q "%SRC%\scripts" "%APP_ROOT%\scripts" >nul
 if exist "%SRC%\version.json" copy /Y "%SRC%\version.json" "%APP_ROOT%\version.json" >nul
 
-REM ---------- Install MongoDB from bundled MSI ----------
+REM ================================================================
+REM  Stage 3: Install / detect MongoDB (from bundled MSI, offline)
+REM  Linearized with GOTO labels to avoid nested parenthesized blocks
+REM  and parse-time %ERRORLEVEL% expansion inside if/else groups.
+REM  Every error path produces a unique exit code + precise reason.
+REM ================================================================
 echo [ 3/14] Installing MongoDB (from bundled MSI -- no download required) ...
 set MONGO_MSI=
+set MONGO_MSI_SIZE=
+set MONGOD=
+set MSI_RC=
 
-if exist "%BUNDLE%\mongodb-windows-x86_64.msi.001" if exist "%BUNDLE%\mongodb-windows-x86_64.msi.002" (
-    if not exist "%BUNDLE%\mongodb-windows-x86_64.msi" (
-        echo   Recombining split MSI parts into a single file ...
-        copy /b "%BUNDLE%\mongodb-windows-x86_64.msi.001" + "%BUNDLE%\mongodb-windows-x86_64.msi.002" "%BUNDLE%\mongodb-windows-x86_64.msi" >nul
-        if not exist "%BUNDLE%\mongodb-windows-x86_64.msi" (
-            echo.
-            echo ================================================================
-            echo   INSTALLATION FAILED  --  could not recombine MongoDB MSI parts.
-            echo   Confirm both mongodb-windows-x86_64.msi.001 and .002 are present.
-            echo   No Windows services have been registered.
-            echo ================================================================
-            exit /b 3
-        )
-    )
-)
-
-for %%f in ("%BUNDLE%\mongodb-windows-x86_64*.msi") do set MONGO_MSI=%%f
-if not defined MONGO_MSI (
-    echo.
-    echo ================================================================
-    echo   INSTALLATION FAILED  --  MongoDB MSI not bundled under %BUNDLE%\
-    echo   Expected: mongodb-windows-x86_64*.msi
-    echo   No Windows services have been registered.
-    echo ================================================================
-    exit /b 3
-)
+REM --- 3.1 Detect existing MongoDB (reuse if already installed) ---
 where mongod >nul 2>&1
-if %ERRORLEVEL%==0 (
-    echo   OK   MongoDB already installed on this PC -- skipping MSI install.
-) else (
-    echo   Running silent MSI install (this may take a minute) ...
-    msiexec /i "%MONGO_MSI%" INSTALLLOCATION="%MONGO_ROOT%" ADDLOCAL=ServerNoService /qn /norestart
-    if %ERRORLEVEL% neq 0 (
-        echo.
-        echo ================================================================
-        echo   INSTALLATION FAILED  --  MongoDB MSI install failed (msiexec %ERRORLEVEL%^).
-        echo   No Windows services have been registered.
-        echo ================================================================
-        exit /b 3
-    )
-    if not exist "%MONGO_ROOT%\bin\mongod.exe" (
-        for /f "usebackq delims=" %%p in (`where /R "%ProgramFiles%\MongoDB" mongod.exe 2^>nul`) do set MONGOD=%%p
-    ) else (
-        set MONGOD=%MONGO_ROOT%\bin\mongod.exe
-    )
-)
-if not defined MONGOD if exist "%MONGO_ROOT%\bin\mongod.exe" set MONGOD=%MONGO_ROOT%\bin\mongod.exe
+if errorlevel 1 goto :STAGE3_INSTALL
+for /f "usebackq delims=" %%p in (`where mongod 2^>nul`) do set MONGOD=%%p
+if not defined MONGOD goto :STAGE3_INSTALL
+echo         OK    MongoDB already installed at !MONGOD! -- reusing it.
+goto :STAGE3_DONE
+
+:STAGE3_INSTALL
+
+REM --- 3.2 Recombine split MSI (.001 + .002) if needed ------------
+if not exist "%BUNDLE%\mongodb-windows-x86_64.msi.001" goto :STAGE3_LOCATE_MSI
+if not exist "%BUNDLE%\mongodb-windows-x86_64.msi.002" goto :STAGE3_LOCATE_MSI
+if exist    "%BUNDLE%\mongodb-windows-x86_64.msi"     goto :STAGE3_LOCATE_MSI
+echo         Recombining split MSI parts into a single file ...
+copy /b "%BUNDLE%\mongodb-windows-x86_64.msi.001" + "%BUNDLE%\mongodb-windows-x86_64.msi.002" "%BUNDLE%\mongodb-windows-x86_64.msi" >nul
+if errorlevel 1 goto :STAGE3_ERR_RECOMBINE
+if not exist "%BUNDLE%\mongodb-windows-x86_64.msi" goto :STAGE3_ERR_RECOMBINE
+
+:STAGE3_LOCATE_MSI
+
+REM --- 3.3 Locate the MSI file ------------------------------------
+for %%f in ("%BUNDLE%\mongodb-windows-x86_64*.msi") do set MONGO_MSI=%%f
+if not defined MONGO_MSI goto :STAGE3_ERR_MSI_MISSING
+
+REM --- 3.4 Validate MSI size (guards against corrupt/truncated download)
+for %%a in ("%MONGO_MSI%") do set MONGO_MSI_SIZE=%%~za
+if not defined MONGO_MSI_SIZE goto :STAGE3_ERR_MSI_INVALID
+if %MONGO_MSI_SIZE% LSS 50000000 goto :STAGE3_ERR_MSI_INVALID
+echo         MSI ready   : !MONGO_MSI! (!MONGO_MSI_SIZE! bytes)
+
+REM --- 3.5 Run msiexec silently -----------------------------------
+echo         Running silent MSI install (this may take a minute) ...
+msiexec /i "%MONGO_MSI%" INSTALLLOCATION="%MONGO_ROOT%" ADDLOCAL=ServerNoService /qn /norestart
+set MSI_RC=!ERRORLEVEL!
+if !MSI_RC! EQU 0    goto :STAGE3_LOCATE_MONGOD
+if !MSI_RC! EQU 3010 goto :STAGE3_LOCATE_MONGOD
+goto :STAGE3_ERR_MSI_INSTALL
+
+:STAGE3_LOCATE_MONGOD
+
+REM --- 3.6 Locate mongod.exe after install ------------------------
+if exist "%MONGO_ROOT%\bin\mongod.exe" set MONGOD=%MONGO_ROOT%\bin\mongod.exe
+if defined MONGOD goto :STAGE3_DONE
+for /f "usebackq delims=" %%p in (`where /R "%ProgramFiles%\MongoDB" mongod.exe 2^>nul`) do set MONGOD=%%p
+if defined MONGOD goto :STAGE3_DONE
+where mongod >nul 2>&1
+if errorlevel 1 goto :STAGE3_ERR_NOT_LOCATED
+for /f "usebackq delims=" %%p in (`where mongod 2^>nul`) do set MONGOD=%%p
+if not defined MONGOD goto :STAGE3_ERR_NOT_LOCATED
+
+:STAGE3_DONE
+echo         OK    mongod.exe  : !MONGOD!
+goto :STAGE3_END
+
+REM ---------------- Stage 3 error handlers ------------------------
+:STAGE3_ERR_RECOMBINE
+echo.
+echo ================================================================
+echo   INSTALLATION FAILED  --  MSI recombination failed
+echo   Could not merge .001 and .002 parts under %BUNDLE%\
+echo   Confirm both files exist and disk has enough free space.
+echo   No Windows services have been registered.
+echo ================================================================
+exit /b 31
+
+:STAGE3_ERR_MSI_MISSING
+echo.
+echo ================================================================
+echo   INSTALLATION FAILED  --  MongoDB MSI not bundled under %BUNDLE%\
+echo   Expected: mongodb-windows-x86_64*.msi
+echo   No Windows services have been registered.
+echo ================================================================
+exit /b 32
+
+:STAGE3_ERR_MSI_INVALID
+echo.
+echo ================================================================
+echo   INSTALLATION FAILED  --  MongoDB MSI is invalid or truncated
+echo   File : %MONGO_MSI%
+echo   Size : %MONGO_MSI_SIZE% bytes  (need at least 50 MB)
+echo   Re-download the Server installer -- the .msi.001 + .002 parts
+echo   may have been transferred incompletely.
+echo ================================================================
+exit /b 33
+
+:STAGE3_ERR_MSI_INSTALL
+echo.
+echo ================================================================
+echo   INSTALLATION FAILED  --  MongoDB MSI installation failed
+echo   msiexec exit code : !MSI_RC!
+echo   Common causes:
+echo     - A reboot is pending from a previous MSI (restart Windows first)
+echo     - Windows Installer service not running (start "msiserver" in services.msc)
+echo     - Another MSI installation is in progress (wait for it to finish)
+echo     - Antivirus blocked the MSI (whitelist %MONGO_MSI%)
+echo   No Windows services have been registered.
+echo ================================================================
+exit /b 34
+
+:STAGE3_ERR_NOT_LOCATED
+echo.
+echo ================================================================
+echo   INSTALLATION FAILED  --  MongoDB detection failed after install
+echo   msiexec reported success but mongod.exe could not be located.
+echo   Searched:
+echo     - %MONGO_ROOT%\bin\mongod.exe
+echo     - %ProgramFiles%\MongoDB\ (recursive)
+echo     - PATH (via where mongod)
+echo   Open %ProgramFiles%\MongoDB\ in Explorer and confirm the install.
+echo   No Windows services have been registered.
+echo ================================================================
+exit /b 35
+
+:STAGE3_END
 
 REM ---------- Create Python venv ----------
 echo [ 4/14] Creating Python virtual environment at %VENV% ...
