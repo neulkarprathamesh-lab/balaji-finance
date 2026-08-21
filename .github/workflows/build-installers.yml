@@ -101,6 +101,41 @@ jobs:
           python-version: '3.11'
           architecture: 'x64'
 
+      - name: Rebuild React frontend for LAN production (no preview URL baked in)
+        working-directory: ${{ github.workspace }}/frontend
+        env:
+          REACT_APP_BACKEND_URL: ""
+          CI: "false"
+          GENERATE_SOURCEMAP: "false"
+        shell: cmd
+        run: |
+          call yarn install --frozen-lockfile
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+          call yarn build
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
+      - name: Overlay production frontend build into payload + verify no preview URL
+        run: |
+          $src = Join-Path "${{ github.workspace }}" "frontend\build"
+          $dst = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0\03-source-code\frontend\build"
+          if (-not (Test-Path (Join-Path $src 'index.html'))) { throw "frontend/build/index.html was not produced" }
+          if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+          Copy-Item -Recurse -Force "$src\*" $dst
+          # Assert the compiled JS contains NO reference to the Emergent preview URL.
+          $jsFiles = Get-ChildItem "$dst\static\js" -Filter "*.js" -Recurse -ErrorAction SilentlyContinue
+          $bad = $jsFiles | Select-String -Pattern 'finance-hub-school\.preview\.emergentagent\.com' -SimpleMatch -ErrorAction SilentlyContinue
+          if ($bad) {
+            $bad | Format-List Path,Line
+            throw "PRODUCTION FRONTEND CONTAMINATED: bundle still contains a dev preview URL - refusing to publish."
+          }
+          # Also assert runtime LAN detection is embedded.
+          $hasLan = $jsFiles | Select-String -Pattern ':8001' -SimpleMatch -ErrorAction SilentlyContinue
+          if (-not $hasLan) { throw "Runtime LAN detection (:8001) not found in the compiled bundle" }
+          $count = ($jsFiles | Measure-Object).Count
+          $sizeMb = [math]::Round((($jsFiles | Measure-Object -Property Length -Sum).Sum) / 1MB, 2)
+          Write-Host "Production frontend overlaid ($count JS files, $sizeMb MB)  -  no preview URL, LAN detection embedded."
+
       - name: Overlay repo-tracked installer scripts onto payload
         run: |
           $payload = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0"

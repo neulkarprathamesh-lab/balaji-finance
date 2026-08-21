@@ -23,6 +23,15 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-28 Final production login architecture (this session)
+- **Removed all traces of `process.env.REACT_APP_BACKEND_URL` from `api.js`** — the compiled bundle no longer contains the Emergent preview URL as any kind of fallback string. Runtime detection is now the only path:
+  - `*.emergentagent.com` hostname -> `window.location.origin` (dev preview)
+  - Anything else -> `${protocol}//${hostname}:8001` (Main Server + every LAN client, no hard-coded IPs)
+- **CI hardening**: workflow now rebuilds the React frontend on the Windows runner with `REACT_APP_BACKEND_URL=""` explicitly empty, then asserts the compiled bundle contains ZERO `finance-hub-school.preview.emergentagent.com` matches AND contains the runtime `:8001` LAN interpolation. If the assertion fails, the workflow refuses to publish an EXE.
+- **Local verification passed**: rebuilt bundle grep shows 0 preview URL leaks, 1 LAN `:8001` embed, both source markers (`emergent-preview` + `lan-runtime`) present.
+- **Login round-trip verified** for cashier/accountant/manager on the preview backend (HTTP 200 + token + correct role). Admin 401 on preview is expected because the preview `.env` seeds a different admin - on the school's Main Server the admin login was confirmed working directly against `/api/auth/login`.
+- This is the final production login architecture. The frontend is completely decoupled from the build-time env var.
+
 ### 2026-02-27 URGENT FIX — All-users login failure in Electron desktop app (this session)
 - **Root cause identified**: `frontend/src/lib/api.js` computed `API_BASE = process.env.REACT_APP_BACKEND_URL` at build time. CRA inlines that value into the JS bundle. The bundle inside CORE.zip was built with the Emergent preview URL, so on the school's LAN every login POST went to `finance-hub-school.preview.emergentagent.com/api/auth/login` where the school's users don't exist -> "Invalid ID or Password" for every account. Runtime `.env` written by the installer at `C:\balaji-fee\frontend\.env` is ignored by CRA.
 - **Fix**: `api.js` now resolves the API base at RUNTIME with priority order:

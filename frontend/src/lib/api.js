@@ -1,53 +1,43 @@
 import axios from 'axios';
 
 /**
- * Resolve the API base URL at RUNTIME (not build time).
+ * Balaji FeeHub - final production login architecture.
  *
- * Why: create-react-app inlines `process.env.REACT_APP_BACKEND_URL` at build
- * time. When the school's Main Server serves the prebuilt bundle from
- * `python -m http.server 3000 --directory build`, that inlined value is
- * whatever the developer/CI used at build time (e.g. the Emergent preview
- * URL) - which does not resolve on the school's LAN. The runtime `.env`
- * the installer writes at `C:\balaji-fee\frontend\.env` is IGNORED by CRA
- * for a prebuilt bundle.
+ * The compiled bundle MUST NOT contain any reference to a build-time
+ * REACT_APP_BACKEND_URL. Everything is resolved at RUNTIME from
+ * `window.location`, guaranteeing:
  *
- * Resolution order:
- *   1. LAN pattern: if the page is served from port 3000 (the pattern the
- *      Main Server + Client PCs always use), backend is on the SAME host
- *      + port 8001. Works for both `127.0.0.1:3000` (Main Server) and
- *      `192.168.x.x:3000` (Client PC).
- *   2. Build-time env var: preserves the Emergent preview environment where
- *      ingress routes `/api` on the same origin.
- *   3. Same-origin fallback.
+ *   - Main Server PC:  http://127.0.0.1:3000   ->  http://127.0.0.1:8001/api
+ *   - Client PC (LAN): http://192.168.x.y:3000 ->  http://192.168.x.y:8001/api
+ *   - Emergent preview: https://*.preview.emergentagent.com  ->  same-origin /api
+ *
+ * There is NO fallback string containing the developer's preview URL.
  */
 function detectApiBase() {
-  if (typeof window !== 'undefined' && window.location) {
-    const loc = window.location;
-    // LAN mode: the Main-Server-style deployment serves the app on :3000.
-    if (loc.port === '3000') {
-      return `${loc.protocol}//${loc.hostname}:8001`;
-    }
+  if (typeof window === 'undefined' || !window.location) return '';
+  const loc = window.location;
+  // Emergent preview / dev environment: ingress routes /api on same origin.
+  if (loc.hostname && /(^|\.)emergentagent\.com$/i.test(loc.hostname)) {
+    return loc.origin;
   }
-  if (process.env.REACT_APP_BACKEND_URL) {
-    return process.env.REACT_APP_BACKEND_URL;
-  }
-  if (typeof window !== 'undefined' && window.location) {
-    return window.location.origin;
-  }
-  return '';
+  // Production LAN pattern: frontend on :3000, backend on :8001, same host.
+  // Covers Main Server and every Client PC without any hard-coded IP.
+  return `${loc.protocol}//${loc.hostname || '127.0.0.1'}:8001`;
+}
+
+function detectSource() {
+  if (typeof window === 'undefined' || !window.location) return 'no-window';
+  if (/(^|\.)emergentagent\.com$/i.test(window.location.hostname || '')) return 'emergent-preview';
+  return 'lan-runtime';
 }
 
 const API_BASE = detectApiBase();
 const API = `${API_BASE}/api`;
 
-// One-line safe boot log so the resolved API base is auditable from the
-// Electron devtools console without ever leaking credentials or tokens.
+// Safe boot log - never leaks credentials or tokens.
 try {
   // eslint-disable-next-line no-console
-  console.info('[BalajiFeeHub] api base resolved  =>', API_BASE, '(source: ' +
-    (typeof window !== 'undefined' && window.location && window.location.port === '3000'
-      ? 'LAN runtime detection'
-      : (process.env.REACT_APP_BACKEND_URL ? 'REACT_APP_BACKEND_URL build-time' : 'same-origin fallback')) + ')');
+  console.info('[BalajiFeeHub] api base =>', API_BASE, '(source:', detectSource() + ')');
 } catch (_) {}
 
 const api = axios.create({ baseURL: API, withCredentials: true });
