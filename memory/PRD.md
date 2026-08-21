@@ -23,6 +23,17 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-02-27 URGENT FIX — All-users login failure in Electron desktop app (this session)
+- **Root cause identified**: `frontend/src/lib/api.js` computed `API_BASE = process.env.REACT_APP_BACKEND_URL` at build time. CRA inlines that value into the JS bundle. The bundle inside CORE.zip was built with the Emergent preview URL, so on the school's LAN every login POST went to `finance-hub-school.preview.emergentagent.com/api/auth/login` where the school's users don't exist -> "Invalid ID or Password" for every account. Runtime `.env` written by the installer at `C:\balaji-fee\frontend\.env` is ignored by CRA.
+- **Fix**: `api.js` now resolves the API base at RUNTIME with priority order:
+  1. Port 3000 rule (LAN pattern): if page served from `:3000`, backend is same host + `:8001`. Handles Main Server (`127.0.0.1:3000` -> `127.0.0.1:8001`) AND every Client PC (`192.168.x.x:3000` -> `192.168.x.x:8001`) automatically.
+  2. Build-time env var: preserves Emergent preview environment where ingress routes `/api` same-origin.
+  3. `window.location.origin` fallback.
+- **Safe diagnostic logging added** in `api.js` and `AuthContext.js`: logs resolved API base, source of resolution (LAN detection vs env vs fallback), login URL, HTTP status, and response-body keys — **never** logs password, token, or JWT.
+- **AuthContext hardened**: shape-checks the login response, throws a clear error if `token` or `user` is missing (guards against future backend shape drift).
+- **Frontend rebuilt** and the fresh `build/` bundle verified: contains runtime detection, `data.token` handler, LAN `:8001` interpolation.
+- **All 4 roles verified via curl** on the preview backend (independent of frontend): admin / cashier / accountant / manager all return HTTP 200 + valid token + correct role.
+
 ### 2026-02-26 Final production pass (this session)
 - **Python venv completes the detect/reuse/repair/create pattern**: Stage 7 now runs `python -c "import sys, pip"` against the existing venv; if it fails, the venv is deleted and recreated. Otherwise reused. Matches the pattern already applied to MongoDB, Backend service, Frontend service, and firewall rules.
 - **Every required component in the installer now follows Detect -> Reuse-if-correct / Repair-if-drifted / Create-if-missing**, is idempotent (safe to re-run), and reports its action explicitly (`REUSED / REPAIRED / CREATED`) in `C:\balaji-fee\logs\installation-report.txt`.
