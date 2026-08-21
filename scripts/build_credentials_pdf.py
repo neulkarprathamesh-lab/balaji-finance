@@ -78,20 +78,20 @@ c.drawString(MARGIN + 34 * mm, PAGE_H - 30 * mm,
              "Balaji Convent & Junior College  .  Butibori, Nagpur")
 
 # Sub-header notice
-y = PAGE_H - 54 * mm
+y = PAGE_H - 50 * mm
 c.setFillColor(SLATE_100)
-c.roundRect(MARGIN, y - 14 * mm, PAGE_W - 2 * MARGIN, 12 * mm, 3, fill=1, stroke=0)
+c.roundRect(MARGIN, y - 12 * mm, PAGE_W - 2 * MARGIN, 10 * mm, 3, fill=1, stroke=0)
 c.setFillColor(SLATE_700)
-c.setFont("Helvetica-Bold", 10)
-c.drawString(MARGIN + 4 * mm, y - 6 * mm, "CONFIDENTIAL - INTERNAL USE ONLY")
-c.setFont("Helvetica", 9)
-c.drawString(MARGIN + 4 * mm, y - 11 * mm,
+c.setFont("Helvetica-Bold", 9)
+c.drawString(MARGIN + 4 * mm, y - 5 * mm, "CONFIDENTIAL - INTERNAL USE ONLY")
+c.setFont("Helvetica", 8.5)
+c.drawString(MARGIN + 4 * mm, y - 9.5 * mm,
              "Change every default password after first login. Rotate PINs each academic year.")
-y -= 22 * mm
+y -= 18 * mm
 
 # ---------- Role cards ----------
 for title, desc, email, password, extras, accent, tint in ROLES:
-    CARD_H = 36 * mm + len(extras) * 5 * mm   # dynamic: extras (Admin PIN, Factory Reset PIN) get their own row
+    CARD_H = 32 * mm + len(extras) * 5 * mm   # dynamic: extras (Admin PIN, Factory Reset PIN) get their own row
     if y - CARD_H < MARGIN:
         c.showPage()
         y = PAGE_H - MARGIN
@@ -132,27 +132,34 @@ for title, desc, email, password, extras, accent, tint in ROLES:
     ]))
     tw, th = tbl.wrapOn(c, PAGE_W - 2 * MARGIN - 12 * mm, 60 * mm)
     tbl.drawOn(c, MARGIN + 8 * mm, y - 20 * mm - th)
-    y -= CARD_H + 4 * mm
+    y -= CARD_H + 3 * mm
 
-# ---------- Login hint footer ----------
-if y - 30 * mm < MARGIN:
+# ---------- Day-1 checklist footer ----------
+if y - 44 * mm < MARGIN:
     c.showPage()
     y = PAGE_H - MARGIN
 c.setFillColor(colors.HexColor("#FEF3C7"))
 c.setStrokeColor(AMBER)
 c.setLineWidth(0.6)
-c.roundRect(MARGIN, y - 24 * mm, PAGE_W - 2 * MARGIN, 22 * mm, 4, fill=1, stroke=1)
+c.roundRect(MARGIN, y - 44 * mm, PAGE_W - 2 * MARGIN, 42 * mm, 4, fill=1, stroke=1)
 c.setFillColor(AMBER_DARK)
-c.setFont("Helvetica-Bold", 10)
-c.drawString(MARGIN + 4 * mm, y - 6 * mm, "How to sign in")
+c.setFont("Helvetica-Bold", 11)
+c.drawString(MARGIN + 4 * mm, y - 7 * mm, "Day-1 checklist (do this on your first login)")
 c.setFillColor(SLATE_700)
 c.setFont("Helvetica", 9)
-c.drawString(MARGIN + 4 * mm, y - 11 * mm,
-             "1. Double-click the Balaji FeeHub desktop icon (Windows-app mode - no browser).")
-c.drawString(MARGIN + 4 * mm, y - 16 * mm,
-             "2. Enter the email + password from the card that matches your role.")
-c.drawString(MARGIN + 4 * mm, y - 21 * mm,
-             "3. On first login, change your password from Profile > Change Password.")
+lines = [
+    "1. Sign in as admin@balajiconvent.in with the password on the red card.",
+    "2. Profile menu (top-right)  ->  Change Password  ->  set a private password only you know.",
+    "3. Profile menu  ->  Change Admin PIN  ->  rotate 1234 to a private 4-digit PIN.",
+    "4. Sidebar  ->  Factory Reset  ->  Change PIN  ->  rotate 2580 to a private 4-digit PIN.",
+    "5. Administration  ->  Users  ->  + New User  ->  create one login per real staff member",
+    "     with the right role (cashier / accountant / manager). Do NOT let staff share logins.",
+    "6. Suspend the seeded demo Cashier / Accountant / Manager accounts once real users exist.",
+]
+ly = y - 13 * mm
+for line in lines:
+    c.drawString(MARGIN + 4 * mm, ly, line)
+    ly -= 4.4 * mm
 
 # Footer
 c.setFillColor(colors.HexColor("#94A3B8"))
