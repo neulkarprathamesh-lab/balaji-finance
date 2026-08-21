@@ -132,6 +132,21 @@ function createMainWindow() {
     },
   });
 
+  // Auto-open devtools if user launches with --debug or sets BALAJI_DEBUG=1.
+  // Also always accessible via Ctrl+Shift+I. Diagnostics are also embedded in
+  // the login page itself for users who cannot use devtools.
+  const debugMode = process.argv.includes('--debug') || process.env.BALAJI_DEBUG === '1';
+  if (debugMode) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+  // Ctrl+Shift+I / F12 to toggle devtools (kept even without --debug).
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if ((input.control && input.shift && input.key.toLowerCase() === 'i') || input.key === 'F12') {
+      mainWindow.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
 

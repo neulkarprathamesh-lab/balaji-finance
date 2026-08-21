@@ -23,6 +23,13 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-03-01 Visible login diagnostics + Electron devtools (this session)
+- **Login page now displays a diagnostics panel** that opens automatically on failure. Shows: resolved `api_base`, exact endpoint URL, `served_from` / `served_host` / `served_port`, HTTP status, latency, response keys, raw backend detail message, and whether the token was stored in localStorage. **Never renders password or token.** Users no longer have to open DevTools to know exactly what the login flow is doing.
+- **AuthContext surfaces the real backend error** — the previous behaviour of collapsing every failure into "Invalid ID or Password" is gone. If the backend returns HTTP 500, the user sees "HTTP 500 - server error". If it's a network failure, they see "Network error: ECONNREFUSED".
+- **Electron main.js**: `--debug` CLI flag or `BALAJI_DEBUG=1` env var auto-opens DevTools. `Ctrl+Shift+I` and `F12` toggle DevTools even in the released EXE for on-site troubleshooting.
+- **Clarified for user**: Electron does NOT package the React app into `app.asar`. The Electron shell just calls `mainWindow.loadURL('http://ip:3000')`. The React bundle that actually runs is at `C:\balaji-fee\frontend\build\static\js\main.*.js` on the Main Server. That's the file to inspect - not the packaged .exe.
+- **Preview admin credentials confirmed**: `neulkarprathamesh@gmail.com` / `Balaji@2026` returns HTTP 200 + administrator role. Production admin (`admin@balajiconvent.in`) is only valid on the school's Main Server because the installer generates its own `.env` there.
+
 ### 2026-02-28 Final production login architecture (this session)
 - **Removed all traces of `process.env.REACT_APP_BACKEND_URL` from `api.js`** — the compiled bundle no longer contains the Emergent preview URL as any kind of fallback string. Runtime detection is now the only path:
   - `*.emergentagent.com` hostname -> `window.location.origin` (dev preview)
