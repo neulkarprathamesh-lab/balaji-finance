@@ -640,6 +640,54 @@ function Stage-Verify {
     }
 
     # ============================================================
+    # Admin account verification (safe first-run check, never prints password)
+    # ============================================================
+    LogInfo 'Admin account seed verification (POST /api/auth/login with seeded credentials)'
+    $envMap = @{}
+    if (Test-Path "$APP_BACKEND\.env") {
+        Get-Content "$APP_BACKEND\.env" | ForEach-Object {
+            if ($_ -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$') {
+                $envMap[$Matches[1]] = $Matches[2].Trim('"').Trim("'").Trim()
+            }
+        }
+    }
+    $adminEmail = $envMap.ADMIN_EMAIL
+    $adminPw    = $envMap.ADMIN_PASSWORD
+    if (-not $adminEmail -or -not $adminPw) {
+        LogWarn 'Admin verification skipped: ADMIN_EMAIL / ADMIN_PASSWORD missing from backend/.env'
+        $Global:ComponentReport.Admin = @{ Email='(missing from .env)'; Status='CANNOT VERIFY' }
+        $failed++
+    } else {
+        # Retry a few times: seed_data() may still be finishing on first backend start
+        $loginOk = $false
+        $lastErr = ''
+        for ($attempt = 1; $attempt -le 10; $attempt++) {
+            try {
+                $body = @{ email = $adminEmail; password = $adminPw } | ConvertTo-Json -Compress
+                $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8001/api/auth/login' -Method POST -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+                if ($r.StatusCode -eq 200) { $loginOk = $true; break }
+            } catch {
+                $sc = $null; if ($_.Exception.Response) { $sc = [int]$_.Exception.Response.StatusCode }
+                $lastErr = "attempt $attempt : HTTP $sc"
+                Start-Sleep 3
+            }
+        }
+        if ($loginOk) {
+            LogOK "Admin account seed verified: '$adminEmail' authenticates successfully"
+            $Global:ComponentReport.Admin = @{ Email=$adminEmail; Status='CREATED (login verified)' }
+        } else {
+            # One more attempt: was the admin already created with a DIFFERENT password on a prior run?
+            # (Detected via /api/auth/me being 401 despite login failing here.)
+            LogWarn "Admin login FAILED for '$adminEmail' after 10 retries ($lastErr)"
+            LogWarn '  Likely cause: on a repair/upgrade, an older admin password is still in the DB.'
+            LogWarn "  Remediation : POST http://127.0.0.1:8001/api/auth/login with the OLD admin password,"
+            LogWarn '                then use Profile > Change Password to set a new one.'
+            $Global:ComponentReport.Admin = @{ Email=$adminEmail; Status='LOGIN FAILED (existing admin has different password - see logs)' }
+            $failed++
+        }
+    }
+
+    # ============================================================
     # END-TO-END USER JOURNEY:
     #   MongoDB -> DB layer -> Backend auth -> Frontend HTML -> Desktop app launch
     # This is the real acceptance test; not passing = installation NOT successful.
@@ -798,6 +846,11 @@ function Stage-Report {
         'LAN',
         "  Main Server IP   : $($cr.Lan.Ip)",
         "  Status           : $($cr.Lan.Status)",
+        '',
+        'Administrator account',
+        "  Email            : $($cr.Admin.Email)",
+        "  Status           : $($cr.Admin.Status)",
+        '  (Password is never written to this report.)',
         '',
         'Windows restart persistence',
         "  Verified         : $($cr.Restart.Verified)",

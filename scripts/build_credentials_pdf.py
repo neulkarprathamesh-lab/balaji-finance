@@ -23,7 +23,7 @@ WHITE      = colors.white
 
 ROLES = [
     ("Administrator", "Full control: users, departments, prefixes, audit, factory reset",
-     "neulkarprathamesh@gmail.com", "Balaji@2026",
+     "admin@balajiconvent.in", "ChangeMeOnFirstLogin@2026",
      [("Admin PIN", "1234"), ("Factory Reset PIN", "2580")],
      colors.HexColor("#DC2626"), colors.HexColor("#FEE2E2")),
     ("Manager", "Approves adjustments, extensions, refunds, cancellations",
