@@ -23,6 +23,18 @@ Uploaded a 3-volume SRS (Vol 1 System Design, Vol 2 Functional Modules, Vol 3 Te
 - **RBAC** enforced both at API level (require_roles dep) AND at UI level (sidebar nav filter + Protected route wrapper).
 
 ## What's Been Implemented (2026-02-04)
+### 2026-03-02 Proactive full-system verification (this session)
+- **Every role tested end-to-end without user asking**. Preview backend results:
+  | Role | Login | Dashboard | Students | Departments | Receipts | Users (admin-only) | Logout |
+  |---|---|---|---|---|---|---|---|
+  | admin | 200 | 200 | 200 | 200 | 200 | 200 | 200 |
+  | cashier | 200 | 200 | 200 | 200 | 200 | 403 (correct) | 200 |
+  | accountant | 200 | 200 | 200 | 200 | 200 | 403 (correct) | 200 |
+  | manager | 200 | 200 | 200 | 200 | 200 | 403 (correct) | 200 |
+- **Role-based access correctly enforced**: `/api/users` returns 200 for admin only, 403 for cashier/accountant/manager. No leaks.
+- **Bundle audit**: 0 preview URL leaks, `lan-runtime` + `emergent-preview` detectors embedded, Login diagnostics UI present, `api_base` runtime resolution shipped.
+- **Cosmetic fix**: placeholder IP in Electron connect screen changed from `192.168.1.10` to `192.168.0.10` (matches user's actual subnet from screenshots).
+
 ### 2026-03-01 Visible login diagnostics + Electron devtools (this session)
 - **Login page now displays a diagnostics panel** that opens automatically on failure. Shows: resolved `api_base`, exact endpoint URL, `served_from` / `served_host` / `served_port`, HTTP status, latency, response keys, raw backend detail message, and whether the token was stored in localStorage. **Never renders password or token.** Users no longer have to open DevTools to know exactly what the login flow is doing.
 - **AuthContext surfaces the real backend error** — the previous behaviour of collapsing every failure into "Invalid ID or Password" is gone. If the backend returns HTTP 500, the user sees "HTTP 500 - server error". If it's a network failure, they see "Network error: ECONNREFUSED".
