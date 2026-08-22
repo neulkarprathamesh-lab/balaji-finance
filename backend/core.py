@@ -555,6 +555,21 @@ async def seed_data():
         if not verify_password(admin_pw, existing["password_hash"]):
             await db.users.update_one({"email": admin_email}, {"$set":{"password_hash": hash_password(admin_pw)}})
 
+    # Production admin - seeded on every environment (preview + Windows EXE)
+    # so the SAME credential works everywhere and users are never confused.
+    prod_admin_email = "admin@balajiconvent.in"
+    prod_admin_pw = "ChangeMeOnFirstLogin@2026"
+    prod_admin_existing = await db.users.find_one({"email": prod_admin_email})
+    if not prod_admin_existing:
+        await db.users.insert_one({
+            "id": gen_id(), "email": prod_admin_email, "password_hash": hash_password(prod_admin_pw),
+            "name": "Administrator", "role": "administrator",
+            "active": True, "created_at": now_iso(),
+        })
+    else:
+        if not verify_password(prod_admin_pw, prod_admin_existing["password_hash"]):
+            await db.users.update_one({"email": prod_admin_email}, {"$set": {"password_hash": hash_password(prod_admin_pw), "role": "administrator", "active": True}})
+
     demo_users = [
         ("cashier@balajiconvent.in","cashier123","Ravi Cashier","cashier"),
         ("accountant@balajiconvent.in","account123","Sunita Accountant","accountant"),
