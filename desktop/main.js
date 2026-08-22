@@ -14,6 +14,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
+const updater = require('./updater/updater');
 
 // -----------------------------------------------------------------------------
 // Config persistence
@@ -236,14 +237,20 @@ function buildMenu() {
       label: '&Help',
       submenu: [
         {
+          label: 'Check for Updates...',
+          click: () => openUpdateWindow(),
+        },
+        { type: 'separator' },
+        {
           label: 'About Balaji FeeHub',
           click: () => {
+            const version = updater.readInstalledVersion();
             dialog.showMessageBox(mainWindow, {
               type: 'info',
               title: 'About Balaji FeeHub',
               message: 'Balaji FeeHub',
               detail:
-                'Version 1.0.0\n' +
+                `Version ${version}\n` +
                 'Balaji Convent & Junior College, Butibori, Nagpur\n\n' +
                 'Fee & accounting software - LAN-based, offline-first.\n' +
                 (currentServerIp ? `Connected to Main Server: ${currentServerIp}\n` : '') +
@@ -288,6 +295,67 @@ ipcMain.handle('get-saved-server', async () => {
 });
 
 // -----------------------------------------------------------------------------
+// Updater
+// -----------------------------------------------------------------------------
+let updateWindow = null;
+
+function openUpdateWindow() {
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateWindow.focus();
+    return;
+  }
+  updateWindow = new BrowserWindow({
+    width: 720,
+    height: 640,
+    parent: mainWindow || undefined,
+    modal: false,
+    title: 'Balaji FeeHub - Check for Updates',
+    icon: path.join(__dirname, 'icon.ico'),
+    autoHideMenuBar: true,
+    backgroundColor: '#0f172a',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  updateWindow.loadURL('file://' + path.join(__dirname, 'renderer', 'update.html'));
+  updateWindow.on('closed', () => { updateWindow = null; });
+}
+
+ipcMain.handle('updater:reconnect', async () => {
+  if (updateWindow && !updateWindow.isDestroyed()) updateWindow.close();
+  if (mainWindow && currentServerIp) mainWindow.webContents.reload();
+  return { ok: true };
+});
+
+updater.registerIpc({
+  getServerIp: () => currentServerIp || '127.0.0.1',
+  showUpdateWindow: openUpdateWindow,
+});
+
+// Silent background check ~30 seconds after startup. Never interrupts the user.
+function scheduleBackgroundCheck() {
+  setTimeout(async () => {
+    try {
+      const info = await updater.checkForUpdates();
+      if (info && info.available && mainWindow && !mainWindow.isDestroyed()) {
+        const clicked = await dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Balaji FeeHub update available',
+          message: `Balaji FeeHub ${info.remote} is available.`,
+          detail: `You are on ${info.installed}.\nDownload size: ${info.downloadSizeBytes ? (info.downloadSizeBytes / 1024 / 1024).toFixed(1) + ' MB' : 'unknown'}\n\n${(info.notes || '').slice(0, 400)}`,
+          buttons: ['View Update', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (clicked.response === 0) openUpdateWindow();
+      }
+    } catch (_) { /* offline / GitHub down — stay silent */ }
+  }, 30_000);
+}
+
+// -----------------------------------------------------------------------------
 // Boot
 // -----------------------------------------------------------------------------
 if (!app.requestSingleInstanceLock()) {
@@ -300,7 +368,10 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(createMainWindow);
+  app.whenReady().then(() => {
+    createMainWindow();
+    scheduleBackgroundCheck();
+  });
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

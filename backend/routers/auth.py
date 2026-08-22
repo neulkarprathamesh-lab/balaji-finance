@@ -146,11 +146,13 @@ async def update_user(uid: str, body: Dict[str, Any], user = Depends(require_rol
 # ---------- Version ----------
 @router.get("/version")
 async def app_version():
-    """Live app version — reads /app/version.json each call so a .bcupdate install
-    is reflected immediately without a code restart being required by callers."""
-    import json as _json
+    """Live app version — reads version.json each call so a .bcupdate install
+    is reflected immediately without a code restart being required by callers.
+    APP_ROOT env var lets Windows installations point at their actual root."""
+    import json as _json, os
     from pathlib import Path
-    vf = Path("/app/version.json")
+    root = Path(os.environ.get("APP_ROOT", "/app"))
+    vf = root / "version.json"
     v = {}
     if vf.exists():
         try: v = _json.loads(vf.read_text())

@@ -4,10 +4,13 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         shell: pwsh
@@ -162,6 +165,20 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Sync single-source-of-truth version across all consumers
+        shell: cmd
+        run: |
+          node tools/sync-version.js
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
+      - name: Run updater unit tests (version-compare + path-safety)
+        shell: cmd
+        run: |
+          node desktop/tests/version-compare.test.js
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+          node desktop/tests/paths.test.js
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
       - name: Install Electron dependencies
         working-directory: ${{ github.workspace }}/desktop
         shell: cmd
@@ -256,8 +273,19 @@ jobs:
           Copy-Item -Force $ico $dst
           Write-Host "Copied icon.ico ($((Get-Item $dst).Length) bytes) into desktop\"
 
+      - name: Embed updater repo config into Electron bundle
+        shell: pwsh
+        run: |
+          $cfg = @{ repo = "${{ github.repository }}"; embeddedAt = (Get-Date -Format o) } | ConvertTo-Json
+          $dst = Join-Path "${{ github.workspace }}" "desktop\updater\config.json"
+          Set-Content -Path $dst -Value $cfg -Encoding UTF8
+          Write-Host "Wrote updater config -> $dst"
+          Get-Content $dst
+
       - name: Build Electron desktop app (win-unpacked)
         working-directory: ${{ github.workspace }}/desktop
+        env:
+          UPDATER_GITHUB_REPO: ${{ github.repository }}
         shell: cmd
         run: |
           call yarn build
@@ -347,3 +375,88 @@ jobs:
             installer-sources/Output/BalajiFeeHub-Client-Setup.exe
             installer-sources/Output/SHA256SUMS.txt
           retention-days: 90
+
+      # ==================================================================
+      # DIFFERENTIAL UPDATE ARTIFACTS
+      # ------------------------------------------------------------------
+      # Runs AFTER installer compilation and the SHA256SUMS.txt step. This
+      # section is additive: if any of the differential steps fails, the
+      # workflow fails, and the release is NOT published. However the
+      # BalajiFeeHub-Installers artifact above has already been uploaded,
+      # so a failed differential-only step still delivers a usable full
+      # installer.
+      # ==================================================================
+
+      - name: Build differential .bcupdate package (diff against previous release)
+        env:
+          UPDATER_GITHUB_REPO: ${{ github.repository }}
+          UPDATER_PRIVATE_KEY_PEM: ${{ secrets.UPDATER_PRIVATE_KEY_PEM }}
+          UPDATER_RELEASE_NOTES: ${{ github.event.head_commit.message }}
+        shell: cmd
+        run: |
+          node tools/build-bcupdate.js
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
+      - name: Refresh SHA256SUMS.txt with differential files included
+        run: |
+          $out = Join-Path "${{ github.workspace }}" "installer-sources\Output"
+          $lines = @()
+          foreach ($f in Get-ChildItem -File $out) {
+            if ($f.Name -match '\.(exe|bcupdate|json)$') {
+              $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+              $lines += ("{0}  {1}    ({2:N0} bytes)" -f $h, $f.Name, $f.Length)
+            }
+          }
+          $lines -join "`n" | Set-Content (Join-Path $out "SHA256SUMS.txt")
+          Get-Content (Join-Path $out "SHA256SUMS.txt")
+
+      - name: Validate release (HARD GATE - fails workflow if anything is wrong)
+        shell: cmd
+        run: |
+          node tools/validate-release.js
+          if %ERRORLEVEL% neq 0 (
+            echo.
+            echo ================================================================
+            echo   RELEASE VALIDATION FAILED - NO RELEASE WILL BE PUBLISHED
+            echo ================================================================
+            echo.
+            exit /b %ERRORLEVEL%
+          )
+
+      - name: Upload differential update artifacts (in addition to full installers)
+        uses: actions/upload-artifact@v4
+        with:
+          name: BalajiFeeHub-Update-Package
+          path: |
+            installer-sources/Output/BalajiFeeHub-Update-*.bcupdate
+            installer-sources/Output/BalajiFeeHub-Update-*.manifest.json
+            installer-sources/Output/BalajiFeeHub-installed-manifest-*.json
+            installer-sources/Output/SHA256SUMS.txt
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # PUBLISH GITHUB RELEASE  (only on tag push v*)
+      # ------------------------------------------------------------------
+      # Non-tag pushes leave the workflow here with both artifacts uploaded
+      # but no Release created. This is intentional.
+      # ------------------------------------------------------------------
+      - name: Publish GitHub Release (only on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Balaji FeeHub ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            installer-sources/Output/BalajiFeeHub-Server-Setup.exe
+            installer-sources/Output/BalajiFeeHub-Client-Setup.exe
+            installer-sources/Output/BalajiFeeHub-Update-*.bcupdate
+            installer-sources/Output/BalajiFeeHub-Update-*.manifest.json
+            installer-sources/Output/BalajiFeeHub-installed-manifest-*.json
+            installer-sources/Output/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -49,12 +49,17 @@ from routers.snapshots import _dump_config_now
 router = APIRouter(prefix="/api/updates", tags=["updates"])
 
 # ---------------- Paths ----------------
-APP_ROOT      = Path("/app")
+# APP_ROOT is the base under which the running application lives.
+#   Linux dev  : /app
+#   Windows PC : C:\balaji-fee\03-source-code  (set by install-main-server.ps1)
+# The env var takes precedence so a differential .bcupdate produced on Linux
+# is applied at the correct destination on Windows without any code change.
+APP_ROOT      = Path(os.environ.get("APP_ROOT", "/app"))
 VERSION_FILE  = APP_ROOT / "version.json"
-KEYS_DIR      = Path("/app/backend/keys")
+KEYS_DIR      = APP_ROOT / "backend" / "keys"
 PRIVATE_KEY   = KEYS_DIR / "update_private.pem"       # dev-only; used by scripts/build_bcupdate.py
 PUBLIC_KEY    = KEYS_DIR / "update_public.pem"        # shipped with the app; used for verify
-UPDATES_DIR   = Path("/app/updates")
+UPDATES_DIR   = Path(os.environ.get("APP_UPDATES_DIR", str(APP_ROOT / "updates")))
 STAGING_DIR   = UPDATES_DIR / "staging"
 ROLLBACK_DIR  = UPDATES_DIR / "rollback"
 
