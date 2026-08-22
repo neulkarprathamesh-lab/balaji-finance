@@ -15,6 +15,7 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "adm-zip": "^0.6.0",
     "electron": "31.7.7",
     "electron-builder": "24.13.3"
   },

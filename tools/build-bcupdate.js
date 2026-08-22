@@ -143,6 +143,15 @@ function readCurrentVersion() {
 }
 
 function fetchJson(url, timeoutMs = 10000) {
+  // file:// scheme for local testing (harmless in CI which uses https URLs).
+  if (url.startsWith('file://')) {
+    return new Promise((resolve, reject) => {
+      try {
+        const p = url.replace(/^file:\/\//, '');
+        resolve(JSON.parse(fs.readFileSync(p, 'utf8')));
+      } catch (e) { reject(e); }
+    });
+  }
   return new Promise((resolve, reject) => {
     const req = https.get(url, { headers: { 'User-Agent': 'BalajiFeeHub-CI' }}, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
