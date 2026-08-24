@@ -78,12 +78,63 @@ jobs:
           }
 
       - name: Extract CORE.zip into installer-sources/payload/BalajiConventFeeSoftware-v1.0/
+        # Do NOT use PowerShell's Expand-Archive here: pwsh 7 on
+        # windows-latest routes it through WindowsBase.dll which fails on
+        # larger CORE.zip payloads with:
+        #   "GAC False v4.0.30319 C:\Program Files\PowerShell\7\WindowsBase.dll
+        #    OperationStopped: Process completed with exit code 1"
+        # bsdtar (`tar.exe`) has shipped with Windows 10/11 and windows-latest
+        # runners for years, streams the archive, and does not hit that path.
+        # If tar ever fails, fall back to .NET's ZipFile::ExtractToDirectory,
+        # which also bypasses WindowsBase.dll. Only if BOTH fail do we surface
+        # an error - so a transient bug in one extractor cannot silently kill
+        # the build the way Expand-Archive did.
         run: |
+          $ErrorActionPreference = 'Stop'
           $work = Join-Path "${{ github.workspace }}" "installer-sources\payload"
           $core = Join-Path $work "BalajiConventFeeSoftware_v1.0_CORE.zip"
           $dest = Join-Path $work "BalajiConventFeeSoftware-v1.0"
-          Expand-Archive -Force $core -DestinationPath $dest
-          Write-Host "Extracted to $dest"
+
+          if (-not (Test-Path $core)) { throw "CORE.zip missing at $core - the download step must have failed." }
+          $sizeMb = [math]::Round((Get-Item $core).Length / 1MB, 2)
+          Write-Host "CORE.zip present: $sizeMb MB"
+
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+          # Attempt 1: bsdtar (native on windows-latest)
+          $tarOk = $false
+          try {
+            Write-Host "Extracting with tar.exe ..."
+            & tar.exe -xf "$core" -C "$dest"
+            if ($LASTEXITCODE -eq 0) { $tarOk = $true }
+            else { Write-Host "tar.exe returned exit code $LASTEXITCODE - will try .NET fallback." }
+          } catch {
+            Write-Host "tar.exe threw: $($_.Exception.Message) - will try .NET fallback."
+          }
+
+          # Attempt 2: .NET ZipFile (bypasses WindowsBase.dll entirely)
+          if (-not $tarOk) {
+            Write-Host "Extracting with [System.IO.Compression.ZipFile] fallback ..."
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($core, $dest)
+          }
+
+          # Post-extract sanity check: the payload must contain the expected
+          # top-level directories, otherwise everything downstream (overlay,
+          # ISCC, manifest build) will fail confusingly later.
+          $required = @(
+            '01-install-main-server',
+            '03-source-code\backend',
+            '03-source-code\frontend',
+            '05-services'
+          )
+          foreach ($r in $required) {
+            $p = Join-Path $dest $r
+            if (-not (Test-Path $p)) { throw "CORE.zip extraction succeeded but expected folder '$r' is missing under $dest - the archive layout has changed." }
+          }
+          Write-Host "Extracted OK to $dest"
+          Get-ChildItem $dest | Format-Table Name, Mode -AutoSize
 
       - name: Recombine MongoDB MSI parts and clean up
         shell: cmd
@@ -139,6 +190,39 @@ jobs:
           $sizeMb = [math]::Round((($jsFiles | Measure-Object -Property Length -Sum).Sum) / 1MB, 2)
           Write-Host "Production frontend overlaid ($count JS files, $sizeMb MB)  -  no preview URL, LAN detection embedded."
 
+      - name: Overlay repo backend source into payload + verify it matches git exactly
+        run: |
+          # Previously the packaged backend (03-source-code\backend) came ONLY from
+          # whatever was frozen inside the downloaded CORE.zip - this repo's
+          # backend/ folder (server.py, core.py, routers/*) was never copied in,
+          # so any backend fix committed here silently never reached a real
+          # installer. Overlay it explicitly and verify byte-for-byte.
+          $src = Join-Path "${{ github.workspace }}" "backend"
+          $dst = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0\03-source-code\backend"
+          if (-not (Test-Path (Join-Path $src 'server.py'))) { throw "repo backend/server.py not found at $src" }
+          if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+          Copy-Item -Recurse -Force "$src\*" $dst
+          # Hard verification: every .py file in the payload must be byte-identical
+          # to the corresponding file in this git checkout. Fail the build rather
+          # than silently ship a mismatched/stale backend.
+          $srcFiles = Get-ChildItem $src -Recurse -Filter "*.py"
+          $mismatches = @()
+          foreach ($f in $srcFiles) {
+            $rel = $f.FullName.Substring($src.Length)
+            $dstFile = Join-Path $dst $rel.TrimStart('\')
+            if (-not (Test-Path $dstFile)) { $mismatches += "MISSING in payload: $rel"; continue }
+            $h1 = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
+            $h2 = (Get-FileHash $dstFile -Algorithm SHA256).Hash
+            if ($h1 -ne $h2) { $mismatches += "HASH MISMATCH: $rel" }
+          }
+          if ($mismatches.Count -gt 0) {
+            $mismatches | ForEach-Object { Write-Host $_ }
+            throw "BACKEND OVERLAY VERIFICATION FAILED: packaged backend does not match git checkout - refusing to publish."
+          }
+          $count = ($srcFiles | Measure-Object).Count
+          Write-Host "Backend overlaid and verified byte-identical to git checkout ($count .py files)."
+
       - name: Overlay repo-tracked installer scripts onto payload
         run: |
           $payload = Join-Path "${{ github.workspace }}" "installer-sources\payload\BalajiConventFeeSoftware-v1.0"
@@ -149,7 +233,8 @@ jobs:
             @{ src = "install-main-server.ps1"; dst = "01-install-main-server\install-main-server.ps1" },
             @{ src = "repair-installation.bat"; dst = "01-install-main-server\repair-installation.bat" },
             @{ src = "backup-now.bat";          dst = "01-install-main-server\backup-now.bat"          },
-            @{ src = "install-client-pc.bat";   dst = "02-install-client-pc\install-client-pc.bat"     }
+            @{ src = "install-client-pc.bat";   dst = "02-install-client-pc\install-client-pc.bat"     },
+            @{ src = "serve_frontend.py";       dst = "01-install-main-server\serve_frontend.py"       }
           )
           foreach ($o in $overlays) {
             $s = Join-Path $srcRoot $o.src
@@ -171,12 +256,14 @@ jobs:
           node tools/sync-version.js
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
-      - name: Run updater unit tests (version-compare + path-safety)
+      - name: Run updater unit tests (version-compare + path-safety + admin-login auth)
         shell: cmd
         run: |
           node desktop/tests/version-compare.test.js
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
           node desktop/tests/paths.test.js
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+          node desktop/tests/updater-auth.test.js
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
       - name: Install Electron dependencies

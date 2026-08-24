@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { Rocket, X, Sparkles } from 'lucide-react';
+import { API_BASE } from '@/lib/api';
 
-const API = process.env.REACT_APP_BACKEND_URL;
+// Runtime-detected (never a build-time env var) - see lib/api.js.
+const API = API_BASE;
 
 /**
  * OnboardingPopover — shows once, the first time an administrator signs in on a fresh install.

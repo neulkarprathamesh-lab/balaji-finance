@@ -6,8 +6,10 @@ import {
   Bomb, ShieldAlert, Lock, KeyRound, Trash2, CheckCircle2, AlertTriangle,
   Loader2, ChevronRight, Eye, EyeOff, Info, Settings2,
 } from 'lucide-react';
+import { API_BASE } from '@/lib/api';
 
-const API = process.env.REACT_APP_BACKEND_URL;
+// Runtime-detected (never a build-time env var) - see lib/api.js.
+const API = API_BASE;
 
 /**
  * Factory Reset — Administrator-only. 5-gate destructive operation:

@@ -27,7 +27,9 @@ const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { spawn } = require('child_process');
 const { isUpgrade, compare } = require('./version-compare');
+const { parseAuthResponse, isAdminUser, parseSha256Sums } = require('./auth-utils');
 
 // --- Config -----------------------------------------------------------------
 
@@ -53,7 +55,8 @@ const RELEASES_API = GITHUB_REPO
   : null;
 const CHECK_TIMEOUT_MS = 8000;
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
-const MAX_DELTA_MB = 300; // hard cap; anything larger is refused
+const MAX_DELTA_MB = 300; // hard cap for .bcupdate deltas; anything larger is refused
+const MAX_FULL_INSTALLER_MB = 1024; // hard cap for full Server/Client .exe downloads (MongoDB MSI + wheels can be large)
 const USER_AGENT = 'BalajiFeeHub-Updater/1.0';
 
 // --- Utilities --------------------------------------------------------------
@@ -96,7 +99,7 @@ function httpGetJson(url, timeoutMs) {
   });
 }
 
-function httpDownload(url, destPath, timeoutMs, onProgress) {
+function httpDownload(url, destPath, timeoutMs, onProgress, maxMB = MAX_DELTA_MB) {
   return new Promise((resolve, reject) => {
     const req = net.request({ method: 'GET', url, redirect: 'follow' });
     req.setHeader('User-Agent', USER_AGENT);
@@ -106,7 +109,7 @@ function httpDownload(url, destPath, timeoutMs, onProgress) {
     req.on('response', (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         clearTimeout(timer);
-        return httpDownload(res.headers.location, destPath, timeoutMs, onProgress).then(resolve, reject);
+        return httpDownload(res.headers.location, destPath, timeoutMs, onProgress, maxMB).then(resolve, reject);
       }
       if (res.statusCode !== 200) {
         clearTimeout(timer);
@@ -119,17 +122,40 @@ function httpDownload(url, destPath, timeoutMs, onProgress) {
         received += chunk.length;
         out.write(chunk);
         if (onProgress) onProgress(received, total);
-        if (received > MAX_DELTA_MB * 1024 * 1024) {
+        if (received > maxMB * 1024 * 1024) {
           out.end(); try { fs.unlinkSync(destPath); } catch (_) {}
           clearTimeout(timer);
           req.abort();
-          reject(new Error(`Update package exceeds ${MAX_DELTA_MB} MB - refusing to download`));
+          reject(new Error(`Download exceeds ${maxMB} MB - refusing to download`));
         }
       });
       res.on('end', () => {
         out.end(() => { clearTimeout(timer); resolve({ received, total }); });
       });
       res.on('error', (e) => { clearTimeout(timer); try { out.end(); } catch (_) {} reject(e); });
+    });
+    req.on('error', (e) => { clearTimeout(timer); reject(e); });
+    req.end();
+  });
+}
+
+function httpGetText(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const req = net.request({ method: 'GET', url, redirect: 'follow' });
+    req.setHeader('User-Agent', USER_AGENT);
+    const timer = setTimeout(() => { req.abort(); reject(new Error(`Request timed out after ${timeoutMs}ms`)); }, timeoutMs);
+    let body = '';
+    req.on('response', (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        clearTimeout(timer);
+        return httpGetText(res.headers.location, timeoutMs).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) {
+        clearTimeout(timer);
+        return reject(new Error(`Request returned HTTP ${res.statusCode}`));
+      }
+      res.on('data', (chunk) => { body += chunk.toString('utf8'); });
+      res.on('end', () => { clearTimeout(timer); resolve(body); });
     });
     req.on('error', (e) => { clearTimeout(timer); reject(e); });
     req.end();
@@ -171,20 +197,28 @@ async function fetchLatestRelease() {
   const assets = rel.assets || [];
   const manifestAsset = pickAsset(assets, (n) => /\.manifest\.json$/i.test(n));
   const deltaAsset    = pickAsset(assets, (n) => /\.bcupdate$/i.test(n));
-  const fullServerExe = pickAsset(assets, (n) => /Server-Setup\.exe$/i.test(n));
+  const serverExeAsset   = pickAsset(assets, (n) => /Server-Setup\.exe$/i.test(n));
+  const clientExeAsset   = pickAsset(assets, (n) => /Client-Setup\.exe$/i.test(n));
+  const sha256sumsAsset  = pickAsset(assets, (n) => /^SHA256SUMS\.txt$/i.test(n));
   if (!manifestAsset) throw new Error('Release has no *.manifest.json asset - cannot verify update.');
-  if (!deltaAsset)    throw new Error('Release has no *.bcupdate asset - only full installer available.');
   // Fetch the manifest itself (public, no auth)
   const manifest = await httpGetJson(manifestAsset.browser_download_url, CHECK_TIMEOUT_MS);
+  // A baseline or otherwise full-installer-only release legitimately has no
+  // .bcupdate asset - that is NOT an error, it just means the differential
+  // path is unavailable and the caller must fall back to the full installer.
   return {
     tag: rel.tag_name,
     name: rel.name || rel.tag_name,
     body: rel.body || '',
     publishedAt: rel.published_at,
     manifest,
-    deltaUrl: deltaAsset.browser_download_url,
-    deltaSize: deltaAsset.size,
-    fullInstallerUrl: fullServerExe ? fullServerExe.browser_download_url : null,
+    deltaUrl: deltaAsset ? deltaAsset.browser_download_url : null,
+    deltaSize: deltaAsset ? deltaAsset.size : 0,
+    serverInstallerUrl: serverExeAsset ? serverExeAsset.browser_download_url : null,
+    serverInstallerFilename: serverExeAsset ? serverExeAsset.name : null,
+    clientInstallerUrl: clientExeAsset ? clientExeAsset.browser_download_url : null,
+    clientInstallerFilename: clientExeAsset ? clientExeAsset.name : null,
+    sha256sumsUrl: sha256sumsAsset ? sha256sumsAsset.browser_download_url : null,
   };
 }
 
@@ -205,9 +239,18 @@ async function checkForUpdates() {
       notes: rel.manifest.release_notes || rel.body || '',
       downloadSizeBytes: rel.deltaSize,
       minSupportedVersion: rel.manifest.min_supported_version || '0.0.0',
+      deltaAvailable: !!rel.deltaUrl,
       deltaUrl: rel.deltaUrl,
       expectedSha256: rel.manifest.sha256 || null,
-      fullInstallerUrl: rel.fullInstallerUrl,
+      fullInstallerRequired: !!rel.manifest.full_installer_required,
+      // Per-component breakdown of what this release actually changes - see
+      // build-bcupdate.js. null for baseline releases (nothing to diff yet).
+      components: rel.manifest.components || null,
+      serverInstallerUrl: rel.serverInstallerUrl,
+      serverInstallerFilename: rel.serverInstallerFilename,
+      clientInstallerUrl: rel.clientInstallerUrl,
+      clientInstallerFilename: rel.clientInstallerFilename,
+      sha256sumsUrl: rel.sha256sumsUrl,
     };
   } catch (e) {
     warn('checkForUpdates failed:', e.message);
@@ -221,7 +264,7 @@ async function downloadUpdate(deltaUrl, expectedSha256, onProgress) {
   const tmp = path.join(dir, `download-${Date.now()}.bcupdate.tmp`);
   const fin = path.join(dir, `latest.bcupdate`);
   try { await fsp.unlink(fin); } catch (_) {}
-  await httpDownload(deltaUrl, tmp, DOWNLOAD_TIMEOUT_MS, onProgress);
+  await httpDownload(deltaUrl, tmp, DOWNLOAD_TIMEOUT_MS, onProgress, MAX_DELTA_MB);
   const actual = await sha256File(tmp);
   if (expectedSha256 && actual.toLowerCase() !== String(expectedSha256).toLowerCase()) {
     try { await fsp.unlink(tmp); } catch (_) {}
@@ -234,36 +277,131 @@ async function downloadUpdate(deltaUrl, expectedSha256, onProgress) {
 }
 
 /**
+ * Full-installer update path (Client PCs, and Server releases that flag
+ * full_installer_required). The differential .bcupdate mechanism can NEVER
+ * cover this - build-bcupdate.js intentionally excludes the Electron shell
+ * and installer scripts from any diff (they change rarely and are only
+ * ever delivered via the full Inno Setup installer). This downloads the
+ * published Server/Client -Setup.exe, verifies it against the release's own
+ * SHA256SUMS.txt (never trusts an unverified executable), and only then
+ * hands off to the installer.
+ */
+async function downloadAndVerifyFullInstaller(installerUrl, sha256sumsUrl, filename, onProgress) {
+  if (!installerUrl) throw new Error('No installer URL was published for this release.');
+  if (!sha256sumsUrl) throw new Error('Release is missing SHA256SUMS.txt - refusing to download an unverifiable installer.');
+  const dir = path.join(app.getPath('userData'), 'updates', 'staging');
+  await fsp.mkdir(dir, { recursive: true });
+  const sumsText = await httpGetText(sha256sumsUrl, CHECK_TIMEOUT_MS);
+  const expected = parseSha256Sums(sumsText, filename);
+  if (!expected) throw new Error(`SHA256SUMS.txt does not list ${filename} - refusing to download an unverifiable installer.`);
+  const tmp = path.join(dir, `${filename}.tmp`);
+  const fin = path.join(dir, filename);
+  try { await fsp.unlink(fin); } catch (_) {}
+  await httpDownload(installerUrl, tmp, DOWNLOAD_TIMEOUT_MS, onProgress, MAX_FULL_INSTALLER_MB);
+  const actual = await sha256File(tmp);
+  if (actual.toLowerCase() !== expected.toLowerCase()) {
+    try { await fsp.unlink(tmp); } catch (_) {}
+    throw new Error(`Installer SHA-256 mismatch. Refusing to run. (expected ${expected}, got ${actual})`);
+  }
+  await fsp.rename(tmp, fin);
+  const stat = await fsp.stat(fin);
+  log(`Downloaded + verified ${filename} (${stat.size} bytes, sha256 ${actual})`);
+  return { path: fin, size: stat.size, sha256: actual };
+}
+
+/**
+ * Launches the (already SHA-256 verified) installer and quits this Electron
+ * instance so Inno Setup can replace the running application's files. The
+ * installer itself requests Administrator elevation (see PrivilegesRequired
+ * = admin in the .iss files) and is safe to run repeatedly (repair-style).
+ */
+function launchInstallerAndQuit(installerPath) {
+  const child = spawn(installerPath, [], { detached: true, stdio: 'ignore' });
+  child.unref();
+  setTimeout(() => app.quit(), 800);
+}
+
+/**
+ * Reuses the EXISTING /api/auth/login endpoint (no new auth logic) to
+ * obtain a Bearer token from the main process, for use when the person is
+ * applying an update from the login screen before they have signed in.
+ * Response parsing is in auth-utils.js (parseAuthResponse) so it can be
+ * unit-tested without needing a live backend or the Electron `net` module.
+ */
+function postLogin(serverIp, email, password) {
+  return new Promise((resolve, reject) => {
+    const url = `http://${serverIp || '127.0.0.1'}:8001/api/auth/login`;
+    const req = net.request({ method: 'POST', url });
+    req.setHeader('Content-Type', 'application/json');
+    req.setHeader('User-Agent', USER_AGENT);
+    let body = '';
+    req.on('response', (res) => {
+      res.on('data', (c) => { body += c.toString('utf8'); });
+      res.on('end', () => {
+        const result = parseAuthResponse(res.statusCode, body);
+        if (!result.ok) return reject(new Error(result.error));
+        resolve({ token: result.token, user: result.user });
+      });
+    });
+    req.on('error', reject);
+    req.write(JSON.stringify({ email, password }));
+    req.end();
+  });
+}
+
+/**
  * Post the downloaded .bcupdate to the Main Server's /api/updates/upload
  * endpoint, then call /api/updates/install/{id} with the admin PIN.
  * Returns the backend's install response so the UI can show the changelog.
+ *
+ * Auth: /api/updates/upload + /install require BOTH a logged-in
+ * administrator AND their PIN (backend core.require_admin_pin). Two ways to
+ * satisfy the "logged-in administrator" half:
+ *   - authToken: an existing JWT the caller already holds (e.g. the app's
+ *     own localStorage bc_token, if the person happens to already be
+ *     logged in when using Help > Check for Updates).
+ *   - adminEmail + adminPassword: used to call the EXISTING /api/auth/login
+ *     endpoint right here (no new auth logic) to obtain a fresh token -
+ *     this is the path used from the login screen, before the person has
+ *     signed in to the app itself.
+ * Previously this relied on the BrowserWindow's session cookie being
+ * forwarded automatically - that assumption was silently broken (the
+ * login cookie is set Secure=true and is therefore never stored by the
+ * browser over plain LAN http://), so upload/install would always have
+ * received 401 "Not authenticated" regardless of caller. Explicit Bearer
+ * tokens fix this for both entry points.
  */
-async function installUpdate({ serverIp, bcupdatePath, adminPin, onStage }) {
-  const backendBase = `http://${serverIp || '127.0.0.1'}:8001/api/updates`;
+async function installUpdate({ serverIp, bcupdatePath, adminPin, authToken, adminEmail, adminPassword, onStage }) {
+  const ip = serverIp || '127.0.0.1';
+  const backendBase = `http://${ip}:8001/api/updates`;
   const stage = (s, msg) => { if (onStage) onStage(s, msg); log(s, msg || ''); };
 
-  // 1. Login is NOT required for /api/updates/current, but /upload + /install
-  //    require an authenticated cookie session. The Electron main window has
-  //    already logged in via the frontend, but from the updater we come in
-  //    fresh. The safest path is to require the admin to be *already logged
-  //    in* in the app before invoking Check for Updates - we forward the
-  //    session cookie the BrowserWindow already holds.
-  //
-  //    In practice we let the caller pass session credentials via a cookie
-  //    jar hand-off; here we use Electron's session API via net.request
-  //    which automatically uses the shared session cookies.
+  if (!adminPin) throw new Error('Administrator PIN is required to apply an update.');
 
-  // 2. Upload
+  let token = authToken || null;
+  if (!token) {
+    if (!adminEmail || !adminPassword) {
+      throw new Error('Administrator email and password (or an active session) are required to apply an update.');
+    }
+    stage('authenticating', 'Verifying administrator credentials...');
+    const loginResp = await postLogin(ip, adminEmail, adminPassword);
+    if (!isAdminUser(loginResp.user)) {
+      throw new Error('Only an administrator account can apply updates.');
+    }
+    token = loginResp.token;
+  }
+
+  // 1. Upload
   stage('uploading', 'Sending update package to Main Server...');
-  const uploadResp = await postMultipart(`${backendBase}/upload`, bcupdatePath, 'file', adminPin);
+  const uploadResp = await postMultipart(`${backendBase}/upload`, bcupdatePath, 'file', adminPin, token);
   if (!uploadResp || !uploadResp.update_id) {
     throw new Error(`Upload rejected: ${uploadResp && uploadResp.detail || 'no update_id returned'}`);
   }
   stage('verifying', 'Main Server verifying package (signature + per-file SHA-256)...');
 
-  // 3. Install
+  // 2. Install
   stage('installing', 'Applying update (DB backup + rollback snapshot + file swap)...');
-  const installResp = await postJson(`${backendBase}/install/${uploadResp.update_id}`, {}, adminPin);
+  const installResp = await postJson(`${backendBase}/install/${uploadResp.update_id}`, {}, adminPin, token);
   if (!installResp || !installResp.ok) {
     throw new Error(`Install rejected: ${installResp && installResp.detail || 'unknown backend error'}`);
   }
@@ -277,7 +415,7 @@ async function installUpdate({ serverIp, bcupdatePath, adminPin, onStage }) {
   };
 }
 
-function postMultipart(url, filePath, fieldName, adminPin) {
+function postMultipart(url, filePath, fieldName, adminPin, authToken) {
   return new Promise((resolve, reject) => {
     const boundary = '----BalajiFeeHubUpdater' + crypto.randomBytes(16).toString('hex');
     const fileName = path.basename(filePath);
@@ -292,6 +430,7 @@ function postMultipart(url, filePath, fieldName, adminPin) {
     req.setHeader('Content-Type', `multipart/form-data; boundary=${boundary}`);
     req.setHeader('User-Agent', USER_AGENT);
     if (adminPin) req.setHeader('X-Admin-Pin', adminPin);
+    if (authToken) req.setHeader('Authorization', `Bearer ${authToken}`);
     let body = '';
     req.on('response', (res) => {
       res.on('data', (c) => { body += c.toString('utf8'); });
@@ -309,12 +448,13 @@ function postMultipart(url, filePath, fieldName, adminPin) {
   });
 }
 
-function postJson(url, payload, adminPin) {
+function postJson(url, payload, adminPin, authToken) {
   return new Promise((resolve, reject) => {
     const req = net.request({ method: 'POST', url });
     req.setHeader('Content-Type', 'application/json');
     req.setHeader('User-Agent', USER_AGENT);
     if (adminPin) req.setHeader('X-Admin-Pin', adminPin);
+    if (authToken) req.setHeader('Authorization', `Bearer ${authToken}`);
     let body = '';
     req.on('response', (res) => {
       res.on('data', (c) => { body += c.toString('utf8'); });
@@ -333,11 +473,15 @@ function postJson(url, payload, adminPin) {
 
 function registerIpc({ getServerIp, showUpdateWindow }) {
   ipcMain.handle('updater:check', async () => checkForUpdates());
+  ipcMain.handle('updater:context', async () => {
+    const serverIp = getServerIp();
+    return { installedVersion: readInstalledVersion(), serverIp, isMainServer: serverIp === '127.0.0.1' };
+  });
   ipcMain.handle('updater:openReleaseNotes', async (_e, url) => {
     if (url) shell.openExternal(url);
     return { ok: true };
   });
-  ipcMain.handle('updater:downloadAndInstall', async (event, { deltaUrl, expectedSha256, adminPin }) => {
+  ipcMain.handle('updater:downloadAndInstall', async (event, { deltaUrl, expectedSha256, adminPin, authToken, adminEmail, adminPassword }) => {
     const sender = event.sender;
     try {
       const dl = await downloadUpdate(deltaUrl, expectedSha256, (received, total) => {
@@ -348,6 +492,9 @@ function registerIpc({ getServerIp, showUpdateWindow }) {
         serverIp: getServerIp(),
         bcupdatePath: dl.path,
         adminPin,
+        authToken,
+        adminEmail,
+        adminPassword,
         onStage: (phase, msg) => sender.send('updater:progress', { phase, message: msg }),
       });
       return { ok: true, ...result };
@@ -356,13 +503,36 @@ function registerIpc({ getServerIp, showUpdateWindow }) {
       return { ok: false, error: e.message };
     }
   });
+  // Client PCs (and any Server release flagged full_installer_required) can
+  // never be updated via the .bcupdate diff mechanism - it structurally
+  // excludes the Electron shell and installer scripts. This path downloads
+  // the already-published, SHA-256-verified Server/Client-Setup.exe and
+  // hands off to it, never modifying the Main Server's backend/frontend.
+  ipcMain.handle('updater:downloadAndRunFullInstaller', async (event, { installerUrl, sha256sumsUrl, filename }) => {
+    const sender = event.sender;
+    try {
+      const dl = await downloadAndVerifyFullInstaller(installerUrl, sha256sumsUrl, filename, (received, total) => {
+        sender.send('updater:progress', { phase: 'downloading-installer', received, total });
+      });
+      sender.send('updater:progress', { phase: 'launching' });
+      launchInstallerAndQuit(dl.path);
+      return { ok: true };
+    } catch (e) {
+      errlog('downloadAndRunFullInstaller failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
 }
 
 module.exports = {
   checkForUpdates,
   downloadUpdate,
+  downloadAndVerifyFullInstaller,
   installUpdate,
   registerIpc,
   readInstalledVersion,
   compare,
+  parseAuthResponse,
+  isAdminUser,
+  parseSha256Sums,
 };

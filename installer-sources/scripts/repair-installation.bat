@@ -78,6 +78,27 @@ if exist "%SRC%\frontend\build" (
 )
 if exist "%SRC%\version.json" copy /Y "%SRC%\version.json" "%APP_ROOT%\version.json" >nul
 
+REM ---------- 3b) Ensure the cache-safe frontend server is present + registered ----------
+REM `python -m http.server` sends no Cache-Control headers, which lets Electron's
+REM persistent Chromium disk cache go on serving a stale app shell indefinitely -
+REM even after this repair correctly refreshes the files above. Make sure
+REM serve_frontend.py is present and the NSSM service actually launches it.
+if exist "%~dp0serve_frontend.py" (
+    set NSSM=%~dp0..\05-services\nssm.exe
+    if exist "!NSSM!" (
+        for /f "usebackq delims=" %%A in (`"!NSSM!" get BalajiFeeHub-Frontend AppParameters 2^>nul`) do set CUR_FE_ARGS=%%A
+        echo !CUR_FE_ARGS! | findstr /C:"serve_frontend.py" >nul
+        if errorlevel 1 (
+            echo   Updating BalajiFeeHub-Frontend service to use the cache-safe server ...
+            "!NSSM!" set BalajiFeeHub-Frontend AppParameters "\"%~dp0serve_frontend.py\" 3000 \"%APP_ROOT%\frontend\build\"" >nul
+            echo   OK  Frontend service now serves via serve_frontend.py (no more stale-cache risk)
+        )
+    )
+) else (
+    echo   WARN  serve_frontend.py not found next to this script - run the full Server
+    echo         installer again to pick up the cache-safe frontend server.
+)
+
 REM ---------- 4) Re-install Python dependencies (offline if possible) ----------
 echo Re-installing Python dependencies ...
 call "%APP_ROOT%\venv\Scripts\activate.bat"

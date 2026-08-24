@@ -109,6 +109,36 @@ async function detectMainServer(onProgress) {
 }
 
 // -----------------------------------------------------------------------------
+// Stale-cache defense
+// -----------------------------------------------------------------------------
+// serve_frontend.py (installer-side) now sends correct Cache-Control headers,
+// so going forward Chromium will always revalidate the app shell over the
+// network. But Electron's HTTP disk cache is PERSISTENT across app restarts
+// (stored under %APPDATA%\<productName>\..., independent of the Program
+// Files install directory that installers/repairs/updates manage), so any
+// client that already cached an old app shell before this fix shipped could
+// otherwise keep serving it forever. Defense in depth: whenever the
+// installed app version changes, force-clear the Chromium cache exactly
+// once before the first navigation of that version.
+async function clearCacheIfVersionChanged() {
+  try {
+    const installedVersion = updater.readInstalledVersion();
+    const cfg = readConfig();
+    if (cfg.lastCacheClearedForVersion === installedVersion) return;
+    await mainWindow.webContents.session.clearCache();
+    // Best-effort - not all storage types are relevant here, but this is
+    // cheap insurance against any other cached response for the app origin.
+    try {
+      await mainWindow.webContents.session.clearStorageData({ storages: ['cachestorage'] });
+    } catch (_) { /* not fatal - clearCache() above already covers HTTP cache */ }
+    writeConfig({ ...cfg, lastCacheClearedForVersion: installedVersion });
+    console.log(`[BalajiFeeHub] Cleared Chromium cache for version ${installedVersion} (stale-frontend defense).`);
+  } catch (err) {
+    console.error('[BalajiFeeHub] Cache-clear check failed (non-fatal):', err);
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Window management
 // -----------------------------------------------------------------------------
 let mainWindow = null;
@@ -198,6 +228,7 @@ async function startDetectionFlow() {
     const ip = await detectMainServer(send);
     if (ip) {
       send(`Found Main Server at ${ip}. Loading Balaji FeeHub...`);
+      await clearCacheIfVersionChanged();
       setTimeout(() => loadServerApp(ip), 300);
     } else {
       send(null);
@@ -325,7 +356,17 @@ function openUpdateWindow() {
 
 ipcMain.handle('updater:reconnect', async () => {
   if (updateWindow && !updateWindow.isDestroyed()) updateWindow.close();
-  if (mainWindow && currentServerIp) mainWindow.webContents.reload();
+  if (mainWindow && currentServerIp) {
+    // An update may have just changed the frontend build on disk - always
+    // clear the cache and hard-reload rather than a plain reload(), which
+    // would still honor any previously cached response for this origin.
+    await clearCacheIfVersionChanged();
+    if (typeof mainWindow.webContents.reloadIgnoringCache === 'function') {
+      mainWindow.webContents.reloadIgnoringCache();
+    } else {
+      mainWindow.webContents.reload();
+    }
+  }
   return { ok: true };
 });
 

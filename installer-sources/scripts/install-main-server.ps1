@@ -523,12 +523,21 @@ function Stage-Services {
     $Global:ComponentReport.Backend = @{ Service='BalajiFeeHub-Backend'; Action=(Ensure-Service $backendSpec) }
 
     # -------- Frontend / static app server --------
+    # IMPORTANT: `python -m http.server` sends NO Cache-Control headers at
+    # all, which lets Electron's persistent Chromium disk cache (survives
+    # across app restarts AND across installer/repair/update runs) go on
+    # serving a stale, previously-cached app shell forever - even after the
+    # files on disk here have been correctly rebuilt and redeployed. Use the
+    # cache-safe server instead (see serve_frontend.py for the exact rules).
+    if (-not (Test-Path "$HERE\serve_frontend.py")) {
+        Die 73 'Frontend server missing' "serve_frontend.py not found at $HERE" 'Re-download the Server installer.'
+    }
     $frontendSpec = @{
         name='BalajiFeeHub-Frontend'
         bin ="$VENV\Scripts\python.exe"
-        args="-m http.server 3000 --directory `"$APP_FRONTEND\build`""
+        args="`"$HERE\serve_frontend.py`" 3000 `"$APP_FRONTEND\build`""
         deps=@('BalajiFeeHub-Backend')
-        desc='Balaji FeeHub - Prebuilt React frontend static server (port 3000)'
+        desc='Balaji FeeHub - Prebuilt React frontend static server, cache-safe (port 3000)'
     }
     $Global:ComponentReport.Frontend = @{ Service='BalajiFeeHub-Frontend'; Action=(Ensure-Service $frontendSpec) }
 }

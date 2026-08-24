@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import api from '@/lib/api';
+import api, { API_BASE } from '@/lib/api';
 import { PageHeader, inr } from '@/components/Layout';
 import { toast } from 'sonner';
 import { Camera, Plus, Download, GitCompare, Trash2, RotateCcw, Layers } from 'lucide-react';
@@ -28,7 +28,7 @@ export default function ConfigSnapshots() {
     const pin = askPin();
     if (!pin) return;
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/snapshots/${id}/export`, {
+      const r = await fetch(`${API_BASE}/api/snapshots/${id}/export`, {
         credentials: 'include', headers: { 'X-Admin-Pin': pin },
       });
       if (!r.ok) throw new Error(await r.text());
@@ -48,7 +48,7 @@ export default function ConfigSnapshots() {
     const pin = window.prompt('Administrator PIN:'); if (!pin) return;
     const pwd = window.prompt('Administrator password:'); if (!pwd) return;
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/snapshots/${id}/restore`, {
+      const r = await fetch(`${API_BASE}/api/snapshots/${id}/restore`, {
         method: 'POST', credentials: 'include',
         headers: { 'X-Admin-Pin': pin, 'X-Admin-Password': pwd },
       });
@@ -173,7 +173,7 @@ function SnapshotCreateModal({ onClose, onDone }) {
     const pin = window.prompt('Administrator PIN required to create a snapshot:');
     if (!pin) { setBusy(false); return; }
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/snapshots`, {
+      const r = await fetch(`${API_BASE}/api/snapshots`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Pin': pin },
         body: JSON.stringify({ academic_year: ay, label, notes }),

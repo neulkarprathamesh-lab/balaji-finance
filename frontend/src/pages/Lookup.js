@@ -3,9 +3,9 @@ import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { ShieldCheck, ShieldAlert, XCircle, MapPin, Phone, Calendar, Hash, School } from 'lucide-react';
 import ReceiptEngine from '@/components/receipt/ReceiptEngine';
+import { API } from '@/lib/api';
 
 const LOGO = '/school-logo.jpeg';
-const API  = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const inr  = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
 
 /**

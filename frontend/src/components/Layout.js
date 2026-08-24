@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import axios from 'axios';
+import { API_BASE } from '@/lib/api';
 
-const API = process.env.REACT_APP_BACKEND_URL;
+// Runtime-detected (never a build-time env var) - see lib/api.js.
+const API = API_BASE;
 
 const CURRENT_VERSION = '1.0.0';
 import {

@@ -9,8 +9,11 @@ contextBridge.exposeInMainWorld('feehub', {
 
   updater: {
     check: () => ipcRenderer.invoke('updater:check'),
+    getContext: () => ipcRenderer.invoke('updater:context'),
     downloadAndInstall: (opts) => ipcRenderer.invoke('updater:downloadAndInstall', opts),
+    downloadAndRunFullInstaller: (opts) => ipcRenderer.invoke('updater:downloadAndRunFullInstaller', opts),
     onProgress: (cb) => ipcRenderer.on('updater:progress', (_e, data) => cb(data)),
+    removeAllProgressListeners: () => ipcRenderer.removeAllListeners('updater:progress'),
     openExternal: (url) => ipcRenderer.invoke('updater:openReleaseNotes', url),
     reconnect: () => ipcRenderer.invoke('updater:reconnect'),
   },

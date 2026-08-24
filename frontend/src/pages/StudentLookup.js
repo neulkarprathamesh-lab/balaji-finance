@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
+import { API } from '@/lib/api';
 
 const LOGO = "/school-logo.jpeg";
 const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function StudentLookup() {
   const { adm } = useParams();

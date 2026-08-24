@@ -40,7 +40,19 @@ try {
   console.info('[BalajiFeeHub] api base =>', API_BASE, '(source:', detectSource() + ')');
 } catch (_) {}
 
-const api = axios.create({ baseURL: API, withCredentials: true });
+// withCredentials is intentionally OFF: this app authenticates purely via
+// the Authorization: Bearer <token> header (set by the interceptor below,
+// from localStorage) - never via cookies. Turning it on forces the browser
+// to treat every cross-port call (frontend :3000 -> backend :8001, which
+// are different origins even on 127.0.0.1) as a "credentialed" CORS
+// request. Since the login endpoint's cookie is Secure=true and is never
+// actually stored by the browser over plain http://, the request never
+// carries a Cookie header, so the backend's CORS_ORIGINS=* response is
+// never upgraded to a specific-origin match - and browsers reject a
+// wildcard Access-Control-Allow-Origin on a credentialed request outright,
+// before the app ever sees the response body. curl/Postman never enforce
+// CORS, so this failure is invisible outside a real browser.
+const api = axios.create({ baseURL: API, withCredentials: false });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('bc_token');

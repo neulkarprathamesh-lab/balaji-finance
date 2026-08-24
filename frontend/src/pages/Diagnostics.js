@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { CheckCircle2, XCircle, RefreshCw, AlertTriangle, HardDrive, Database, Server, Wifi, Printer, ScanLine, FolderCheck, Archive, Info, Loader2 } from 'lucide-react';
+import { API_BASE } from '@/lib/api';
 
-const API = process.env.REACT_APP_BACKEND_URL;
+// Runtime-detected (never a build-time env var) - see lib/api.js.
+const API = API_BASE;
 
 function StatusPill({ ok, warn }) {
   const cls = ok

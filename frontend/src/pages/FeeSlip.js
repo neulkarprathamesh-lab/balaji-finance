@@ -3,10 +3,10 @@ import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { QRCodeSVG } from 'qrcode.react';
 import { Printer, ArrowLeft, Shield, Info } from 'lucide-react';
+import { API } from '@/lib/api';
 
 const LOGO = "/school-logo.jpeg";
 const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 // Deterministic slip id (stable per family per day)
 const slipId = (adm, when) => {

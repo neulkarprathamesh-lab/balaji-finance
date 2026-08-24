@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import api from '@/lib/api';
+import api, { API_BASE } from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
 import { toast } from 'sonner';
 import {
@@ -25,7 +25,7 @@ function useAdminPin() {
 }
 
 async function downloadWithPin(endpoint, filename, pin) {
-  const url = `${process.env.REACT_APP_BACKEND_URL}${endpoint}`;
+  const url = `${API_BASE}${endpoint}`;
   const r = await fetch(url, {
     method: 'GET',
     credentials: 'include',
@@ -56,7 +56,7 @@ export default function DeliveryCenter() {
   const loadPurgePreview = async () => {
     const pin = ask(); if (!pin) return;
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/production/purge/preview`, {
+      const r = await fetch(`${API_BASE}/api/production/purge/preview`, {
         credentials: 'include',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('bc_token') || ''}`,
@@ -74,7 +74,7 @@ export default function DeliveryCenter() {
     const pin = ask(); if (!pin) return;
     setBusy('purge');
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/production/purge`, {
+      const r = await fetch(`${API_BASE}/api/production/purge`, {
         method: 'POST', credentials: 'include',
         headers: {
           'Content-Type': 'application/json',

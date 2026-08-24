@@ -256,6 +256,42 @@ function zipDirectory(srcDir, zipPath) {
   if (r.status !== 0) fail(`zipping failed for ${srcDir} -> ${zipPath} (exit ${r.status})`);
 }
 
+function isInDifferentialScope(payloadRel) {
+  const norm = payloadRel.replace(/\\/g, '/');
+  return PATH_MAP.some((m) => {
+    if (m.isFile) return norm === m.fromPrefix.replace(/\\/g, '/');
+    const pn = m.fromPrefix.replace(/\\/g, '/');
+    return norm === pn || norm.startsWith(pn + '/');
+  });
+}
+
+// The differential .bcupdate can only ever cover backend/ + frontend/build/
+// (see PATH_MAP above). Anything else that changed since the previous
+// release - the Electron shell, installer scripts, MongoDB/NSSM bundle -
+// can ONLY be delivered via the full installer. Detecting this explicitly
+// prevents ever silently shipping a "differential update" that misses a
+// real Electron/installer fix (exactly the failure mode that caused the
+// original stale-frontend bug this updater exists to fix).
+function detectOutOfScopeChanges(currentFiles, prevFiles) {
+  const desktopPrefix = '04-desktop/';
+  const scriptPrefixes = ['01-install-main-server/', '02-install-client-pc/', '05-services/'];
+  let desktopChanged = false;
+  let installerScriptsChanged = false;
+  let otherChanged = false;
+  const allKeys = new Set([...Object.keys(currentFiles || {}), ...Object.keys(prevFiles || {})]);
+  for (const k of allKeys) {
+    if (isInDifferentialScope(k)) continue;
+    const a = currentFiles ? currentFiles[k] : undefined;
+    const b = prevFiles ? prevFiles[k] : undefined;
+    const changed = !a || !b || a.sha256 !== b.sha256;
+    if (!changed) continue;
+    if (k.startsWith(desktopPrefix)) desktopChanged = true;
+    else if (scriptPrefixes.some((p) => k.startsWith(p))) installerScriptsChanged = true;
+    else otherChanged = true;
+  }
+  return { desktopChanged, installerScriptsChanged, otherChanged };
+}
+
 async function main() {
   const version = readCurrentVersion();
   const buildDate = new Date().toISOString().slice(0, 10);
@@ -301,6 +337,7 @@ async function main() {
       sha256: null,
       size: 0,
       min_supported_version: version,
+      components: null,
     };
     const p = path.join(OUTPUT_DIR, `BalajiFeeHub-Update-${version}.manifest.json`);
     fs.writeFileSync(p, JSON.stringify(stub, null, 2), 'utf8');
@@ -311,21 +348,34 @@ async function main() {
   const baseVersion = prev.version || 'unknown';
   const { changed, removed } = diff(current.app_files, prev.app_files || prev.files || {});
   const changedCount = Object.keys(changed).length;
+  const outOfScope = detectOutOfScopeChanges(current.files, prev.files || {});
+  const fullInstallerRequired = outOfScope.desktopChanged || outOfScope.installerScriptsChanged || outOfScope.otherChanged;
   log(`Diff vs ${baseVersion}: ${changedCount} changed file(s), ${removed.length} removed.`);
+  if (fullInstallerRequired) {
+    log(`Out-of-scope changes detected (desktop=${outOfScope.desktopChanged}, installer_scripts=${outOfScope.installerScriptsChanged}, other=${outOfScope.otherChanged}) - full_installer_required will be set.`);
+  }
 
   if (changedCount === 0) {
-    log('No file changes between releases. Emitting NOOP manifest.');
+    log('No differential-eligible (backend/frontend) file changes between releases.');
     const noop = {
       version,
       base_version: baseVersion,
       is_baseline: false,
-      is_noop: true,
-      full_installer_required: false,
-      release_notes: 'No application file changes in this release (documentation-only).',
+      is_noop: !fullInstallerRequired,
+      full_installer_required: fullInstallerRequired,
+      release_notes: fullInstallerRequired
+        ? 'This release only changes the desktop application and/or installer scripts - install via the full installer.'
+        : 'No application file changes in this release (documentation-only).',
       build_date: buildDate,
       sha256: null,
       size: 0,
       min_supported_version: baseVersion,
+      components: {
+        backend: false,
+        frontend: false,
+        desktop: outOfScope.desktopChanged,
+        installer_scripts: outOfScope.installerScriptsChanged,
+      },
     };
     fs.writeFileSync(path.join(OUTPUT_DIR, `BalajiFeeHub-Update-${version}.manifest.json`),
                      JSON.stringify(noop, null, 2), 'utf8');
@@ -394,7 +444,7 @@ async function main() {
     base_version: baseVersion,
     is_baseline: false,
     is_noop: false,
-    full_installer_required: false,
+    full_installer_required: fullInstallerRequired,
     release_notes: releaseNotes,
     build_date: buildDate,
     sha256: sha,
@@ -404,6 +454,12 @@ async function main() {
     changed_file_count: changedCount,
     removed_file_count: removed.length,
     delta_asset: path.basename(bcupdatePath),
+    components: {
+      backend: Object.keys(changed).some((k) => k === 'backend' || k.startsWith('backend/')),
+      frontend: Object.keys(changed).some((k) => k === 'frontend' || k.startsWith('frontend/')),
+      desktop: outOfScope.desktopChanged,
+      installer_scripts: outOfScope.installerScriptsChanged,
+    },
   };
   fs.writeFileSync(path.join(OUTPUT_DIR, `BalajiFeeHub-Update-${version}.manifest.json`),
                    JSON.stringify(outer, null, 2), 'utf8');

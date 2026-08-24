@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import api from '@/lib/api';
+import api, { API_BASE } from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
 import AdminPinPrompt from '@/components/AdminPinPrompt';
 import { Download, Upload, Shield, PackageOpen, CheckCircle2, AlertTriangle, HardDrive, RefreshCw } from 'lucide-react';
 
-const BACKEND = process.env.REACT_APP_BACKEND_URL;
+// Runtime-detected (never a build-time env var) - see lib/api.js.
+const BACKEND = API_BASE;
 
 const fmtBytes = (n) => n < 1024 ? `${n} B` : n < 1024*1024 ? `${(n/1024).toFixed(1)} KB` : `${(n/1048576).toFixed(2)} MB`;
 

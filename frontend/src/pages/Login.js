@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { API_BASE } from '@/lib/api';
+import api, { API_BASE } from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Eye, EyeOff, Info } from 'lucide-react';
+import { Loader2, Eye, EyeOff, Info, RefreshCw } from 'lucide-react';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -10,9 +10,53 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [err, setErr] = useState('');
   const [diag, setDiag] = useState(null);
+  const [conn, setConn] = useState({ state: 'checking' });
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const nav = useNavigate();
+
+  // Connectivity self-test: hits the SAME api instance login uses (identical
+  // baseURL/CORS/credentials config), against /api/version, which requires
+  // no authentication at all. Run this BEFORE any login attempt so a failure
+  // here conclusively points to network/CORS/wrong-backend-URL rather than
+  // credentials - and a success here conclusively rules those out, so a
+  // subsequent login failure must be about the credentials/user data.
+  const runConnectivityTest = useCallback(async () => {
+    setConn({ state: 'checking' });
+    const t0 = performance.now();
+    try {
+      const r = await api.get('/version');
+      const t1 = performance.now();
+      setConn({
+        state: 'ok',
+        http_status: r.status,
+        latency_ms: Math.round(t1 - t0),
+        version: r.data?.version || '(unknown)',
+      });
+    } catch (e) {
+      const t1 = performance.now();
+      const status = e?.response?.status ?? null;
+      const network = !e?.response;
+      let likely_cause = 'Unknown error.';
+      if (network) {
+        likely_cause = navigator.onLine
+          ? 'Request never reached the backend (or the browser blocked the response). Most likely causes: backend service is stopped, wrong API URL, a firewall blocking port 8001, or a CORS policy rejection.'
+          : 'This device appears to be offline (navigator.onLine is false).';
+      } else if (status >= 500) {
+        likely_cause = 'Backend reached the server but it returned an error - check backend logs.';
+      }
+      setConn({
+        state: 'failed',
+        http_status: status,
+        network_error: network,
+        error_code: e?.code || '(none)',
+        error_name: e?.name || '(none)',
+        error_message: e?.message || 'unknown',
+        latency_ms: Math.round(t1 - t0),
+        likely_cause,
+      });
+    }
+  }, []);
 
   useEffect(() => {
     // Baseline diagnostic shown before any login attempt.
@@ -23,8 +67,10 @@ export default function Login() {
       served_from: typeof window !== 'undefined' ? window.location.href : '(no window)',
       served_host: typeof window !== 'undefined' ? window.location.hostname : '(n/a)',
       served_port: typeof window !== 'undefined' ? (window.location.port || '(none)') : '(n/a)',
+      in_electron: typeof window !== 'undefined' && !!window.feehub,
     });
-  }, []);
+    runConnectivityTest();
+  }, [runConnectivityTest]);
 
   const submit = async (e) => {
     e.preventDefault(); setErr(''); setLoading(true);
@@ -41,8 +87,20 @@ export default function Login() {
       const keys = e?.response?.data ? Object.keys(e.response.data).join(',') : '(no body)';
       const errMsg = e?.message || 'unknown';
       const network = !e?.response;
+      let likely_cause = null;
+      if (network) {
+        likely_cause = conn.state === 'ok'
+          ? 'Connectivity test just succeeded, so the backend IS reachable - this specific request failed some other way (check error_code/error_name below).'
+          : 'The connectivity self-test above also failed - this is a network/CORS/backend-reachability problem, not a wrong-credentials problem.';
+      }
       setErr(typeof detail === 'string' ? detail : (network ? `Network error: ${errMsg}` : `HTTP ${status ?? '???'} - ${errMsg}`));
-      setDiag((d) => ({ ...d, stage: 'failed', http_status: status, response_keys: keys, response_detail: typeof detail === 'string' ? detail : '(non-string)', network_error: network, error_message: errMsg, latency_ms: Math.round(t1 - t0), token_stored: !!localStorage.getItem('bc_token') }));
+      setDiag((d) => ({
+        ...d, stage: 'failed', http_status: status, response_keys: keys,
+        response_detail: typeof detail === 'string' ? detail : '(non-string)',
+        network_error: network, error_code: e?.code || '(none)', error_name: e?.name || '(none)',
+        error_message: errMsg, likely_cause, latency_ms: Math.round(t1 - t0),
+        token_stored: !!localStorage.getItem('bc_token'),
+      }));
     } finally { setLoading(false); }
   };
 
@@ -98,16 +156,37 @@ export default function Login() {
           </button>
 
           {diag && (
-            <details data-testid="login-diagnostics" className="mt-3 rounded border border-slate-200 bg-slate-50 text-[11px] font-mono text-slate-700" open={diag.stage === 'failed'}>
+            <details data-testid="login-diagnostics" className="mt-3 rounded border border-slate-200 bg-slate-50 text-[11px] font-mono text-slate-700" open={diag.stage === 'failed' || conn.state === 'failed'}>
               <summary className="cursor-pointer px-3 py-2 flex items-center gap-1.5 text-slate-600 font-sans font-medium text-xs">
-                <Info className="w-3.5 h-3.5" /> Login diagnostics (click to {diag.stage === 'failed' ? 'hide' : 'show'})
+                <Info className="w-3.5 h-3.5" /> Login diagnostics (click to {(diag.stage === 'failed' || conn.state === 'failed') ? 'hide' : 'show'})
               </summary>
               <div className="px-3 pb-3 space-y-0.5 leading-relaxed">
+                <div className="flex items-center justify-between pt-1 pb-1">
+                  <span className="text-slate-500 font-sans font-medium text-[10px] uppercase tracking-wide">Connectivity self-test (/api/version, no login required)</span>
+                  <button type="button" onClick={runConnectivityTest} data-testid="login-diag-retest"
+                    className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 font-sans">
+                    <RefreshCw className="w-3 h-3" /> Re-test
+                  </button>
+                </div>
+                <div><span className="text-slate-400">conn_state  :</span> {conn.state}</div>
+                {conn.state === 'ok' && <>
+                  <div><span className="text-slate-400">conn_status :</span> {conn.http_status}</div>
+                  <div><span className="text-slate-400">conn_ms     :</span> {conn.latency_ms}</div>
+                  <div><span className="text-slate-400">backend_ver :</span> {conn.version}</div>
+                </>}
+                {conn.state === 'failed' && <>
+                  <div><span className="text-slate-400">conn_status :</span> {String(conn.http_status)}</div>
+                  <div><span className="text-slate-400">conn_code   :</span> {conn.error_code}</div>
+                  <div><span className="text-slate-400">conn_error  :</span> {conn.error_message}</div>
+                  <div className="text-amber-700"><span className="text-slate-400">likely_cause:</span> {conn.likely_cause}</div>
+                </>}
+                <div className="text-slate-500 font-sans font-medium text-[10px] uppercase tracking-wide pt-2 pb-1 border-t border-slate-200 mt-1">Request detail</div>
                 <div><span className="text-slate-400">stage       :</span> {diag.stage}</div>
                 <div><span className="text-slate-400">api_base    :</span> {diag.api_base || '(empty)'}</div>
                 <div><span className="text-slate-400">endpoint    :</span> {diag.endpoint}</div>
                 <div><span className="text-slate-400">served_from :</span> {diag.served_from}</div>
                 <div><span className="text-slate-400">served_host :</span> {diag.served_host}:{diag.served_port}</div>
+                <div><span className="text-slate-400">in_electron :</span> {String(diag.in_electron)}</div>
                 {diag.stage !== 'idle' && <>
                   <div><span className="text-slate-400">http_status :</span> {String(diag.http_status)}</div>
                   <div><span className="text-slate-400">latency_ms  :</span> {diag.latency_ms}</div>
@@ -115,7 +194,10 @@ export default function Login() {
                   {diag.stage === 'failed' && <>
                     <div><span className="text-slate-400">resp_detail :</span> {diag.response_detail}</div>
                     <div><span className="text-slate-400">network_err :</span> {String(diag.network_error)}</div>
+                    <div><span className="text-slate-400">err_code    :</span> {diag.error_code}</div>
+                    <div><span className="text-slate-400">err_name    :</span> {diag.error_name}</div>
                     <div><span className="text-slate-400">err_message :</span> {diag.error_message}</div>
+                    {diag.likely_cause && <div className="text-amber-700"><span className="text-slate-400">likely_cause:</span> {diag.likely_cause}</div>}
                   </>}
                   {diag.stage === 'success' && <>
                     <div><span className="text-slate-400">user_role   :</span> {diag.role}</div>

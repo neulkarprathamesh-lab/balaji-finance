@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import api from '@/lib/api';
+import api, { API_BASE } from '@/lib/api';
 import { PageHeader } from '@/components/Layout';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
@@ -8,7 +8,8 @@ import {
   Undo2, CheckCircle2, XCircle, Loader2, Info, Clock, KeyRound, FileText,
 } from 'lucide-react';
 
-const API = process.env.REACT_APP_BACKEND_URL;
+// Runtime-detected (never a build-time env var) - see lib/api.js.
+const API = API_BASE;
 
 const fmtBytes = (n) => {
   if (!n && n !== 0) return '—';
