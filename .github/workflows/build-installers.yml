@@ -233,6 +233,8 @@ jobs:
             @{ src = "install-main-server.ps1"; dst = "01-install-main-server\install-main-server.ps1" },
             @{ src = "repair-installation.bat"; dst = "01-install-main-server\repair-installation.bat" },
             @{ src = "backup-now.bat";          dst = "01-install-main-server\backup-now.bat"          },
+            @{ src = "uninstall.bat";           dst = "01-install-main-server\uninstall.bat"           },
+            @{ src = "uninstall.ps1";           dst = "01-install-main-server\uninstall.ps1"           },
             @{ src = "install-client-pc.bat";   dst = "02-install-client-pc\install-client-pc.bat"     },
             @{ src = "serve_frontend.py";       dst = "01-install-main-server\serve_frontend.py"       }
           )

@@ -95,7 +95,24 @@ Name: "{group}\Uninstall Balaji FeeHub";            Filename: "{uninstallexe}"
 Filename: "{app}\04-desktop\BalajiFeeHub.exe"; WorkingDir: "{app}\04-desktop"; Flags: postinstall nowait skipifsilent; Description: "Launch Balaji FeeHub"
 
 [UninstallRun]
-Filename: "{app}\01-install-main-server\uninstall.bat"; Flags: runhidden waituntilterminated
+Filename: "{app}\01-install-main-server\uninstall.bat"; Flags: runhidden waituntilterminated; RunOnceId: "BalajiFeeHubServerUninstallScript"
+
+[UninstallDelete]
+; Belt-and-braces: force-remove anything the batch script left behind so a
+; leaked NSSM log file or a stale rollback zip cannot block Inno's own
+; directory-removal pass. Inno silently ignores files that are truly locked
+; (which are then cleared on reboot).
+Type: filesandordirs; Name: "{app}\logs"
+Type: filesandordirs; Name: "{app}\updates"
+Type: filesandordirs; Name: "{app}\venv"
+Type: filesandordirs; Name: "{app}\01-install-main-server"
+Type: filesandordirs; Name: "{app}\02-install-client-pc"
+Type: filesandordirs; Name: "{app}\03-source-code"
+Type: filesandordirs; Name: "{app}\04-desktop"
+Type: filesandordirs; Name: "{app}\05-services"
+Type: files;          Name: "{app}\*.log"
+Type: files;          Name: "{app}\version.json"
+Type: dirifempty;     Name: "{app}"
 
 [Code]
 procedure RunStageOrAbort(BatFile, StatusMsg, FailReason: String);
